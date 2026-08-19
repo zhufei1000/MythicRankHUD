@@ -13,6 +13,7 @@ local detailBorderAlphaSlider
 local detailBackgroundAlphaSlider
 local borderChecks = {}
 local rowChecks = {}
+local zoneChecks = {}
 local refreshingControls = false
 local pendingHUDStyle = false
 local pendingDetailStyle = false
@@ -195,6 +196,9 @@ local function RefreshControls()
     for key, check in pairs(rowChecks) do
         SetChecked(check, db.showRows[key] ~= false)
     end
+    for key, check in pairs(zoneChecks) do
+        SetChecked(check, ns.IsZoneAllowed(key))
+    end
     for style, check in pairs(borderChecks) do
         SetChecked(check, db.borderStyle == style)
     end
@@ -247,7 +251,7 @@ local function CreateSettingsPanel()
     scrollFrame:EnableMouseWheel(true)
 
     local content = CreateFrame("Frame", nil, scrollFrame)
-    content:SetSize(620, 940)
+    content:SetSize(620, 1052)
     scrollFrame:SetScrollChild(content)
 
     scrollFrame:SetScript("OnMouseWheel", function(self, delta)
@@ -281,8 +285,28 @@ local function CreateSettingsPanel()
         ns.SetLocked(checked)
     end)
 
+    local zoneLabel = content:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+    zoneLabel:SetPoint("TOPLEFT", content, "TOPLEFT", 20, -128)
+    zoneLabel:SetText(L.SETTINGS_ZONE_GROUP)
+
+    local zoneOptions = ns.GetZoneOptions()
+    for index, option in ipairs(zoneOptions) do
+        local column = index <= 3 and 0 or 1
+        local rowIndex = column == 0 and index or index - 3
+        local x = column == 0 and 18 or 326
+        local y = -152 - ((rowIndex - 1) * 32)
+        local zoneKey = option.key
+        local check = CreateCheckButton(content, x, y, L[option.label], function(checked)
+            ns.SetZoneAllowed(zoneKey, checked)
+            if ns.ApplyZoneVisibility then
+                ns.ApplyZoneVisibility()
+            end
+        end)
+        zoneChecks[zoneKey] = check
+    end
+
     local rowsLabel = content:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-    rowsLabel:SetPoint("TOPLEFT", content, "TOPLEFT", 20, -140)
+    rowsLabel:SetPoint("TOPLEFT", content, "TOPLEFT", 20, -252)
     rowsLabel:SetText(L.SETTINGS_VISIBLE_ROWS)
 
     for index, option in ipairs(ROW_OPTIONS) do
@@ -291,7 +315,7 @@ local function CreateSettingsPanel()
         local column = index <= 6 and 0 or 1
         local rowIndex = column == 0 and index or index - 6
         local x = column == 0 and 18 or 326
-        local y = -164 - ((rowIndex - 1) * 32)
+        local y = -276 - ((rowIndex - 1) * 32)
         local check = CreateCheckButton(content, x, y, L[optionLabel], function(checked)
             ns.SetRowVisible(optionKey, checked)
             if ns.IsHUDVisible() then
@@ -302,18 +326,18 @@ local function CreateSettingsPanel()
     end
 
     local borderStyleLabel = content:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-    borderStyleLabel:SetPoint("TOPLEFT", content, "TOPLEFT", 20, -374)
+    borderStyleLabel:SetPoint("TOPLEFT", content, "TOPLEFT", 20, -486)
     borderStyleLabel:SetText(L.SETTINGS_BORDER_STYLE)
 
-    CreateBorderOption(content, 18, -398, "transparent", L.SETTINGS_BORDER_TRANSPARENT)
-    CreateBorderOption(content, 170, -398, "gold", L.SETTINGS_BORDER_GOLD)
-    CreateBorderOption(content, 300, -398, "class", L.SETTINGS_BORDER_CLASS)
+    CreateBorderOption(content, 18, -510, "transparent", L.SETTINGS_BORDER_TRANSPARENT)
+    CreateBorderOption(content, 170, -510, "gold", L.SETTINGS_BORDER_GOLD)
+    CreateBorderOption(content, 300, -510, "class", L.SETTINGS_BORDER_CLASS)
 
     local borderAlphaLabel = content:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-    borderAlphaLabel:SetPoint("TOPLEFT", content, "TOPLEFT", 20, -452)
+    borderAlphaLabel:SetPoint("TOPLEFT", content, "TOPLEFT", 20, -564)
     borderAlphaLabel:SetText(L.SETTINGS_BORDER_ALPHA)
 
-    borderAlphaSlider = CreateSlider(content, 24, -482, 240, "0%", "100%", 0, 1, 0.05, function(slider, value)
+    borderAlphaSlider = CreateSlider(content, 24, -594, 240, "0%", "100%", 0, 1, 0.05, function(slider, value)
         value = math.floor(value * 20 + 0.5) / 20
         SetSliderText(slider, string.format("%d%%", math.floor(value * 100 + 0.5)))
         if not refreshingControls then
@@ -323,10 +347,10 @@ local function CreateSettingsPanel()
     end)
 
     local backgroundAlphaLabel = content:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-    backgroundAlphaLabel:SetPoint("TOPLEFT", content, "TOPLEFT", 336, -452)
+    backgroundAlphaLabel:SetPoint("TOPLEFT", content, "TOPLEFT", 336, -564)
     backgroundAlphaLabel:SetText(L.SETTINGS_BACKGROUND_ALPHA)
 
-    backgroundAlphaSlider = CreateSlider(content, 340, -482, 240, "0%", "100%", 0, 1, 0.05, function(slider, value)
+    backgroundAlphaSlider = CreateSlider(content, 340, -594, 240, "0%", "100%", 0, 1, 0.05, function(slider, value)
         value = math.floor(value * 20 + 0.5) / 20
         SetSliderText(slider, string.format("%d%%", math.floor(value * 100 + 0.5)))
         if not refreshingControls then
@@ -336,10 +360,10 @@ local function CreateSettingsPanel()
     end)
 
     local widthLabel = content:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-    widthLabel:SetPoint("TOPLEFT", content, "TOPLEFT", 20, -558)
+    widthLabel:SetPoint("TOPLEFT", content, "TOPLEFT", 20, -670)
     widthLabel:SetText(L.SETTINGS_WIDTH)
 
-    widthSlider = CreateSlider(content, 24, -588, 240, "220", "420", 220, 420, 2, function(slider, value)
+    widthSlider = CreateSlider(content, 24, -700, 240, "220", "420", 220, 420, 2, function(slider, value)
         value = math.floor(value / 2 + 0.5) * 2
         SetSliderText(slider, string.format(L.SETTINGS_WIDTH_VALUE, value))
         if not refreshingControls then
@@ -349,10 +373,10 @@ local function CreateSettingsPanel()
     end)
 
     local scaleLabel = content:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-    scaleLabel:SetPoint("TOPLEFT", content, "TOPLEFT", 336, -558)
+    scaleLabel:SetPoint("TOPLEFT", content, "TOPLEFT", 336, -670)
     scaleLabel:SetText(L.SETTINGS_SCALE)
 
-    scaleSlider = CreateSlider(content, 340, -588, 240, "75%", "150%", 0.75, 1.50, 0.05, function(slider, value)
+    scaleSlider = CreateSlider(content, 340, -700, 240, "75%", "150%", 0.75, 1.50, 0.05, function(slider, value)
         value = math.floor(value * 20 + 0.5) / 20
         SetSliderText(slider, string.format("%d%%", math.floor(value * 100 + 0.5)))
         if not refreshingControls then
@@ -365,19 +389,19 @@ local function CreateSettingsPanel()
     end)
 
     local detailGroupLabel = content:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-    detailGroupLabel:SetPoint("TOPLEFT", content, "TOPLEFT", 20, -674)
+    detailGroupLabel:SetPoint("TOPLEFT", content, "TOPLEFT", 20, -786)
     detailGroupLabel:SetText(L.SETTINGS_DETAIL_GROUP)
 
-    detailCheck = CreateCheckButton(content, 18, -700, L.SETTINGS_ENABLE_DETAIL, function(checked)
+    detailCheck = CreateCheckButton(content, 18, -812, L.SETTINGS_ENABLE_DETAIL, function(checked)
         ns.SetDetailEnabled(checked)
         ns.ApplyDetailFeatureState()
     end)
 
     local detailBorderAlphaLabel = content:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-    detailBorderAlphaLabel:SetPoint("TOPLEFT", content, "TOPLEFT", 20, -752)
+    detailBorderAlphaLabel:SetPoint("TOPLEFT", content, "TOPLEFT", 20, -864)
     detailBorderAlphaLabel:SetText(L.SETTINGS_DETAIL_BORDER_ALPHA)
 
-    detailBorderAlphaSlider = CreateSlider(content, 24, -782, 240, "0%", "100%", 0, 1, 0.05, function(slider, value)
+    detailBorderAlphaSlider = CreateSlider(content, 24, -894, 240, "0%", "100%", 0, 1, 0.05, function(slider, value)
         value = math.floor(value * 20 + 0.5) / 20
         SetSliderText(slider, string.format("%d%%", math.floor(value * 100 + 0.5)))
         if not refreshingControls then
@@ -387,10 +411,10 @@ local function CreateSettingsPanel()
     end)
 
     local detailBackgroundAlphaLabel = content:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-    detailBackgroundAlphaLabel:SetPoint("TOPLEFT", content, "TOPLEFT", 336, -752)
+    detailBackgroundAlphaLabel:SetPoint("TOPLEFT", content, "TOPLEFT", 336, -864)
     detailBackgroundAlphaLabel:SetText(L.SETTINGS_DETAIL_BACKGROUND_ALPHA)
 
-    detailBackgroundAlphaSlider = CreateSlider(content, 340, -782, 240, "0%", "100%", 0, 1, 0.05, function(slider, value)
+    detailBackgroundAlphaSlider = CreateSlider(content, 340, -894, 240, "0%", "100%", 0, 1, 0.05, function(slider, value)
         value = math.floor(value * 20 + 0.5) / 20
         SetSliderText(slider, string.format("%d%%", math.floor(value * 100 + 0.5)))
         if not refreshingControls then
@@ -401,7 +425,7 @@ local function CreateSettingsPanel()
 
     local reset = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
     reset:SetSize(130, 24)
-    reset:SetPoint("TOPLEFT", content, "TOPLEFT", 20, -876)
+    reset:SetPoint("TOPLEFT", content, "TOPLEFT", 20, -988)
     reset:SetText(L.SETTINGS_RESET)
     reset:SetScript("OnClick", function()
         ns.ResetPosition()

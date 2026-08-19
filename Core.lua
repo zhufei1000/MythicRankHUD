@@ -37,6 +37,13 @@ local DEFAULTS = {
     detailX = 0,
     detailY = 0,
     showRows = DEFAULT_ROW_VISIBILITY,
+    showZones = {
+        dungeon = true,
+        delve = true,
+        raid = true,
+        pvp = true,
+        world = true,
+    },
     characters = {},
     selectedRegion = nil,
 }
@@ -1006,6 +1013,34 @@ function ns.IsHUDVisible()
     return IsHUDVisible() and true or false
 end
 
+local function UpdateZoneVisibility()
+    local currentDB = GetDB()
+    if not currentDB.showHUD then
+        hudDirty = true
+        return
+    end
+    local shouldShow = ns.ShouldShowInZone()
+    if frame then
+        if shouldShow and not frame:IsShown() then
+            frame:Show()
+            hudDirty = true
+            QueueHUDRefresh(0)
+        elseif not shouldShow and frame:IsShown() then
+            frame:Hide()
+            hudDirty = true
+        end
+    else
+        hudDirty = true
+        if shouldShow then
+            ns.SetHUDShown(true)
+        end
+    end
+end
+
+function ns.ApplyZoneVisibility()
+    UpdateZoneVisibility()
+end
+
 function ns.SetHUDShown(enabled)
     local currentDB = GetDB()
     currentDB.showHUD = enabled == true
@@ -1016,9 +1051,14 @@ function ns.SetHUDShown(enabled)
         ApplyHUDScale()
         ApplyHUDStyle()
         ApplyHUDLayout()
-        frame:Show()
-        hudDirty = true
-        QueueHUDRefresh(0)
+        if ns.ShouldShowInZone() then
+            frame:Show()
+            hudDirty = true
+            QueueHUDRefresh(0)
+        else
+            frame:Hide()
+            hudDirty = true
+        end
     else
         hudDirty = true
         if frame then
@@ -1122,6 +1162,7 @@ local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("ADDON_LOADED")
 eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 eventFrame:RegisterEvent("CHALLENGE_MODE_COMPLETED")
+eventFrame:RegisterEvent("ZONE_CHANGED_NEW_AREA")
 eventFrame:SetScript("OnEvent", function(self, event, arg1)
     if event == "ADDON_LOADED" then
         if arg1 ~= ADDON_NAME then
@@ -1165,6 +1206,7 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
             end)
         end
     elseif event == "PLAYER_ENTERING_WORLD" then
+        UpdateZoneVisibility()
         hudDirty = true
         if IsHUDVisible() then
             QueueHUDRefresh(1)
@@ -1174,6 +1216,8 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
         if ns.HandleMythicDetailEvent then
             ns.HandleMythicDetailEvent(event, arg1)
         end
+    elseif event == "ZONE_CHANGED_NEW_AREA" then
+        UpdateZoneVisibility()
     elseif event == "CHALLENGE_MODE_COMPLETED" then
         hudDirty = true
         if IsHUDVisible() then

@@ -2,7 +2,7 @@
 ## Title: MythicRankHUD
 ## Notes: Estimates Mythic+ rank and progress using the selected regional data pack.
 ## Author: QFX
-## Version: 1.0.3
+## Version: 1.1.0
 ## IconTexture: Interface\Icons\Achievement_ChallengeMode_Gold
 ## OptionalDeps: QFXMythicRankData_US, QFXMythicRankData_EU, QFXMythicRankData_KR, QFXMythicRankData_TW, QFXMythicRankData_CN
 ## SavedVariables: QFXMythicRankHUDGlobalDB
@@ -10,6 +10,7 @@
 Util.lua
 Locale.lua
 Region.lua
+ZoneFilter.lua
 RankTarget.lua
 Core.lua
 MythicDetailResources.lua
