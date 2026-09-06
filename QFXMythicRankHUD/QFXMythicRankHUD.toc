@@ -1,0 +1,24 @@
+## Interface: 120000, 120001, 120005, 120007, 120100
+## Title: QFX Mythic Rank HUD
+## Title-zhCN: QFX 大秘境排名 HUD
+## Title-zhTW: QFX 傳奇鑰石排名 HUD
+## Notes: Displays estimated CN Mythic+ rank, percentile progress, and daily gains.
+## Notes-zhCN: 显示国服大秘境预计排名、超越比例、每日分数与排名提升。
+## Notes-zhTW: 顯示中國區傳奇鑰石預估排名、超越比例、每日分數與排名提升。
+## Author: QFX
+## Version: 1.3.22
+## IconTexture: Interface\Icons\Achievement_ChallengeMode_Gold
+## OptionalDeps: GroupFinder, PremadeGroupBoard, MeetingStone_Happy, MeetingStoneHappy, MeetingStoneEX, MeetingStone, QFXMythicRankData_CN, QFXMythicRankData_US, QFXMythicRankData_EU, QFXMythicRankData_KR, QFXMythicRankData_TW
+## SavedVariables: QFXMythicRankHUDDB
+
+Util.lua
+Locale.lua
+Region.lua
+RankTarget.lua
+Core.lua
+MythicDetailResources.lua
+MythicDetailStatistics.lua
+MythicDetailData.lua
+MythicDetail.lua
+MeetingStoneIntegration.lua
+Settings.lua

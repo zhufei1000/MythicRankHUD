@@ -19,19 +19,13 @@ local DEFAULT_ROW_VISIBILITY = {
 
 local DEFAULTS = {
     showHUD = true,
-    locked = true,
+    announceTeleport = true,
     enableMythicDetail = true,
-    scale = 1,
-    width = 292,
     borderStyle = "gold",
     borderAlpha = 0.85,
     backgroundAlpha = 0.88,
     detailBorderAlpha = 1.00,
     detailBackgroundAlpha = 0.90,
-    point = "CENTER",
-    relativePoint = "CENTER",
-    x = 0,
-    y = -140,
     detailPoint = "CENTER",
     detailRelativePoint = "CENTER",
     detailX = 0,
@@ -67,12 +61,11 @@ local VALID_ANCHOR_POINTS = {
     BOTTOMRIGHT = true,
 }
 
-local frame
-local divider
 local rows = {}
-local hudDirty = true
-local hudRefreshQueued = false
-local hudCreated = false
+for _, key in ipairs(ROW_ORDER) do
+    rows[key] = { key = key }
+end
+local hudSnapshot = {}
 local db
 local databaseInitialized = false
 local englishTextWarningPrinted = false
@@ -118,14 +111,12 @@ local function InitializeDatabase()
     if type(db.showHUD) ~= "boolean" then
         db.showHUD = DEFAULTS.showHUD
     end
-    if type(db.locked) ~= "boolean" then
-        db.locked = DEFAULTS.locked
+    if type(db.announceTeleport) ~= "boolean" then
+        db.announceTeleport = DEFAULTS.announceTeleport
     end
     if type(db.enableMythicDetail) ~= "boolean" then
         db.enableMythicDetail = DEFAULTS.enableMythicDetail
     end
-    db.scale = Util.ClampNumber(db.scale, 0.75, 1.50, DEFAULTS.scale)
-    db.width = Util.ClampNumber(db.width, 220, 420, DEFAULTS.width)
     db.borderAlpha = Util.ClampNumber(db.borderAlpha, 0, 1, DEFAULTS.borderAlpha)
     db.backgroundAlpha = Util.ClampNumber(db.backgroundAlpha, 0, 1, DEFAULTS.backgroundAlpha)
     if not hadDetailBorderAlpha and oldDB then
@@ -151,10 +142,6 @@ local function InitializeDatabase()
     if db.borderStyle ~= "transparent" and db.borderStyle ~= "class" and db.borderStyle ~= "gold" then
         db.borderStyle = DEFAULTS.borderStyle
     end
-    db.point = VALID_ANCHOR_POINTS[db.point] and db.point or DEFAULTS.point
-    db.relativePoint = VALID_ANCHOR_POINTS[db.relativePoint] and db.relativePoint or DEFAULTS.relativePoint
-    db.x = Util.ClampNumber(db.x, -100000, 100000, DEFAULTS.x)
-    db.y = Util.ClampNumber(db.y, -100000, 100000, DEFAULTS.y)
     db.detailPoint = VALID_ANCHOR_POINTS[db.detailPoint] and db.detailPoint or DEFAULTS.detailPoint
     db.detailRelativePoint = VALID_ANCHOR_POINTS[db.detailRelativePoint]
         and db.detailRelativePoint
@@ -174,17 +161,6 @@ end
 
 local function GetDB()
     return db or InitializeDatabase()
-end
-
-local function IsHUDEnabled()
-    local currentDB = GetDB()
-    return currentDB and currentDB.showHUD == true
-end
-
-local function IsHUDVisible()
-    return IsHUDEnabled()
-        and frame
-        and frame:IsShown()
 end
 
 local function GetCharacterKey()
@@ -209,21 +185,23 @@ local function GetDateKey()
     return date("%Y%m%d")
 end
 
-local function GetDataDateParts(metadata)
-    local version = metadata and tostring(metadata.dataVersion or "") or ""
-    local year, month, day = version:match("^(%d%d%d%d)(%d%d)(%d%d)")
-    if year and month and day then
-        return tonumber(year), tonumber(month), tonumber(day)
-    end
-    return nil
+local function FormatVersionTimestamp(version)
+    local year, month, day, hour, minute = tostring(version or ""):match(
+        "^(%d%d%d%d)(%d%d)(%d%d)(%d%d)(%d%d)"
+    )
+    if not year then return "--" end
+    return string.format(
+        L.DATA_TIME_FORMAT,
+        tonumber(month),
+        tonumber(day),
+        tonumber(hour),
+        tonumber(minute)
+    )
 end
 
-local function GetDataDate(metadata)
-    local year, month, day = GetDataDateParts(metadata)
-    if not year then
-        return "--"
-    end
-    return string.format(L.DATA_DATE_FORMAT, year, month, day)
+local function GetDataUpdatedTime(metadata)
+    local sourceTime = FormatVersionTimestamp(metadata and metadata.dataVersion)
+    return string.format(L.DATA_UPDATED, sourceTime)
 end
 
 local function FormatScore(value, decimals)
@@ -280,27 +258,20 @@ local function HexToRGB(hex)
 end
 
 local function SetRow(row, label, value, r, g, b)
-    row.label:SetText(label)
-    row.value:SetText(value)
-    row.value:SetTextColor(r or 1, g or 1, b or 1)
-end
-
-local function CreateRow(parent, key, labelTemplate, valueTemplate, height)
-    local row = {
-        key = key,
-        height = height or 20,
-    }
-
-    row.label = parent:CreateFontString(nil, "OVERLAY", labelTemplate or "GameFontNormal")
-    row.label:SetWidth(112)
-    row.label:SetJustifyH("LEFT")
-    row.label:SetWordWrap(false)
-    row.label:SetTextColor(0.82, 0.82, 0.82)
-
-    row.value = parent:CreateFontString(nil, "OVERLAY", valueTemplate or "GameFontHighlight")
-    row.value:SetJustifyH("RIGHT")
-    row.value:SetWordWrap(false)
-    return row
+    if row.label and row.value then
+        row.label:SetText(label)
+        row.value:SetText(value)
+        row.value:SetTextColor(r or 1, g or 1, b or 1)
+    end
+    if row.key then
+        local snapshot = hudSnapshot[row.key] or {}
+        snapshot.label = label
+        snapshot.value = value
+        snapshot.r = r or 1
+        snapshot.g = g or 1
+        snapshot.b = b or 1
+        hudSnapshot[row.key] = snapshot
+    end
 end
 
 local function GetClassColor()
@@ -334,226 +305,6 @@ end
 local function GetDetailAccentColor()
     local db = GetDB()
     return GetAccentColor(db.detailBorderAlpha)
-end
-
-local function HasVisibleRowInRange(showRows, firstIndex, lastIndex)
-    for index = firstIndex, lastIndex do
-        if showRows[ROW_ORDER[index]] ~= false then
-            return true
-        end
-    end
-    return false
-end
-
-local function ApplyHUDLayout()
-    if not frame then
-        return
-    end
-
-    local db = GetDB()
-    local showRows = db.showRows
-    local width = tonumber(db.width) or DEFAULTS.width
-    local labelWidth = math.max(76, math.min(104, width * 0.34))
-    local gap = math.max(4, math.min(6, 4 + (width - 220) / 46))
-    local topPadding = 10
-    local bottomPadding = 10
-    local cursor = topPadding
-    local hasTopSection = HasVisibleRowInRange(showRows, 1, 3)
-    local hasMainSection = HasVisibleRowInRange(showRows, 4, #ROW_ORDER)
-    local dividerUsed = false
-
-    for index, key in ipairs(ROW_ORDER) do
-        local row = rows[key]
-        local visible = showRows[key] ~= false
-
-        if index == 4 and hasTopSection and hasMainSection then
-            cursor = cursor + 4
-            divider:ClearAllPoints()
-            divider:SetPoint("TOPLEFT", frame, "TOPLEFT", 12, -cursor)
-            divider:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -12, -cursor)
-            divider:Show()
-            cursor = cursor + 8
-            dividerUsed = true
-        end
-
-        row.value:SetShown(visible)
-
-        if row.centered then
-            row.label:Hide()
-            if visible then
-                row.value:ClearAllPoints()
-                row.value:SetPoint("TOPLEFT", frame, "TOPLEFT", 14, -cursor)
-                row.value:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -14, -cursor)
-                row.value:SetJustifyH("CENTER")
-                cursor = cursor + row.height
-            end
-        else
-            row.label:SetShown(visible)
-            if visible then
-                row.label:ClearAllPoints()
-                row.label:SetPoint("TOPLEFT", frame, "TOPLEFT", 14, -cursor)
-                row.label:SetWidth(labelWidth)
-
-                row.value:ClearAllPoints()
-                row.value:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -14, -cursor)
-                row.value:SetPoint("LEFT", row.label, "RIGHT", gap, 0)
-                row.value:SetJustifyH("RIGHT")
-
-                cursor = cursor + row.height
-            end
-        end
-    end
-
-    if not dividerUsed then
-        divider:Hide()
-    end
-
-    frame:SetWidth(width)
-    frame:SetHeight(math.max(32, cursor + bottomPadding))
-end
-
-local function ApplyHUDStyle()
-    if not frame then
-        return
-    end
-
-    local db = GetDB()
-    frame:SetBackdropColor(0.035, 0.035, 0.045, db.backgroundAlpha)
-
-    local accentR, accentG, accentB, accentA = GetHUDAccentColor()
-    frame:SetBackdropBorderColor(accentR, accentG, accentB, accentA)
-    divider:SetColorTexture(accentR, accentG, accentB, accentA)
-end
-
-local function SavePosition()
-    if not frame then
-        return
-    end
-    local point, _, relativePoint, x, y = frame:GetPoint(1)
-    local db = GetDB()
-    db.point = point or "CENTER"
-    db.relativePoint = relativePoint or "CENTER"
-    db.x = x or 0
-    db.y = y or 0
-end
-
-local function ApplyHUDPosition()
-    if not frame then
-        return
-    end
-    local db = GetDB()
-    frame:ClearAllPoints()
-    frame:SetPoint(db.point, UIParent, db.relativePoint, db.x, db.y)
-end
-
-local function ApplyHUDScale()
-    if not frame then
-        return
-    end
-    local db = GetDB()
-    frame:SetScale(db.scale)
-end
-
-local function OpenSettings()
-    if ns.OpenSettings then
-        ns.OpenSettings()
-    end
-end
-
-local function ShowTooltip(self)
-    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-    GameTooltip:SetText(L.ADDON_TITLE, 1, 0.82, 0)
-    local API = _G.QFXMythicRankData
-    local region = ns.GetSelectedRegion()
-    local metadata = region and API and API.GetMetadata and API:GetMetadata(region)
-    if metadata then
-        GameTooltip:AddLine(string.format(L.DATA_UPDATED, GetDataDate(metadata)), 1, 1, 1)
-    end
-    GameTooltip:AddLine(L.DATA_SOURCE, 0.75, 0.75, 0.75)
-    GameTooltip:AddLine(" ")
-    GameTooltip:AddLine(L.ESTIMATE_NOTICE, 1, 0.82, 0, true)
-    local db = GetDB()
-    if db.locked and db.enableMythicDetail ~= false then
-        GameTooltip:AddLine(L.DETAIL_LEFT_CLICK_HINT, 0.65, 0.85, 1, true)
-    elseif not db.locked then
-        GameTooltip:AddLine(L.DETAIL_DRAG_HINT, 0.65, 0.85, 1, true)
-    end
-    GameTooltip:AddLine(L.DETAIL_SETTINGS_HINT, 0.65, 0.85, 1, true)
-    GameTooltip:Show()
-end
-
-local function CreateHUD()
-    if frame then
-        return frame
-    end
-
-    frame = CreateFrame("Frame", "QFXMythicRankHUDGlobalFrame", UIParent, "BackdropTemplate")
-    hudCreated = true
-    frame:SetSize(DEFAULTS.width, 218)
-    frame:SetFrameStrata("MEDIUM")
-    frame:SetClampedToScreen(true)
-    frame:SetMovable(true)
-    frame:EnableMouse(true)
-    frame:RegisterForDrag("LeftButton")
-    frame:SetBackdrop({
-        bgFile = "Interface\\Buttons\\WHITE8X8",
-        edgeFile = "Interface\\Buttons\\WHITE8X8",
-        edgeSize = 1,
-    })
-    frame:SetScript("OnDragStart", function(self)
-        if not GetDB().locked and not (type(InCombatLockdown) == "function" and InCombatLockdown()) then
-            self:StartMoving()
-        end
-    end)
-    frame:SetScript("OnDragStop", function(self)
-        self:StopMovingOrSizing()
-        SavePosition()
-    end)
-    frame:SetScript("OnMouseUp", function(_, button)
-        local db = GetDB()
-        if button == "RightButton" then
-            OpenSettings()
-        elseif button == "LeftButton" and db.locked then
-            if db.enableMythicDetail == false then
-                return
-            end
-            if type(InCombatLockdown) == "function" and InCombatLockdown() then
-                return
-            end
-            if ns.ToggleMythicDetail then
-                ns.ToggleMythicDetail()
-            end
-        end
-    end)
-    frame:SetScript("OnEnter", ShowTooltip)
-    frame:SetScript("OnLeave", GameTooltip_Hide)
-    frame:SetScript("OnShow", function()
-        if hudDirty then
-            ns.QueueHUDRefresh(0)
-        end
-    end)
-
-    divider = frame:CreateTexture(nil, "ARTWORK")
-    divider:SetHeight(1)
-
-    rows.dataUpdated = CreateRow(frame, "dataUpdated", "GameFontNormalSmall", "GameFontNormalSmall", 20)
-    rows.dataUpdated.centered = true
-    rows.cutoff01 = CreateRow(frame, "cutoff01", "GameFontNormalSmall", "GameFontHighlightSmall", 18)
-    rows.cutoff1 = CreateRow(frame, "cutoff1", "GameFontNormalSmall", "GameFontHighlightSmall", 18)
-    rows.score = CreateRow(frame, "score", "GameFontNormal", "GameFontHighlightLarge", 26)
-    rows.todayScore = CreateRow(frame, "todayScore")
-    rows.rank = CreateRow(frame, "rank")
-    rows.surpassed = CreateRow(frame, "surpassed")
-    rows.todayRank = CreateRow(frame, "todayRank")
-    rows.toTop25 = CreateRow(frame, "toTop25")
-    rows.rankRange = CreateRow(frame, "rankRange")
-    rows.percentileRange = CreateRow(frame, "percentileRange")
-
-    ApplyHUDPosition()
-    ApplyHUDScale()
-    ApplyHUDStyle()
-    ApplyHUDLayout()
-    return frame
 end
 
 local function UpdateDailyState(score)
@@ -638,20 +389,6 @@ local function GetHUDAchievementTargets(API, region)
 end
 
 local function RefreshHUDData()
-    hudRefreshQueued = false
-
-    if not IsHUDEnabled() then
-        hudDirty = true
-        return
-    end
-
-    CreateHUD()
-    if not frame:IsShown() then
-        hudDirty = true
-        return
-    end
-
-    hudDirty = false
 
     local API = _G.QFXMythicRankData
     local region = ns.GetSelectedRegion()
@@ -699,7 +436,7 @@ local function RefreshHUDData()
 
     local c01r, c01g, c01b = HexToRGB(cutoff01.color)
     local c1r, c1g, c1b = HexToRGB(cutoff1.color)
-    SetRow(rows.dataUpdated, "", string.format(L.DATA_UPDATED, GetDataDate(metadata)), GOLD_R, GOLD_G, GOLD_B)
+    SetRow(rows.dataUpdated, "", GetDataUpdatedTime(metadata), GOLD_R, GOLD_G, GOLD_B)
     SetRow(rows.cutoff01, L.CUTOFF_01, FormatScore(cutoff01Score, 1), c01r, c01g, c01b)
     SetRow(rows.cutoff1, L.CUTOFF_1, FormatScore(cutoff1Score, 1), c1r, c1g, c1b)
 
@@ -909,88 +646,20 @@ local function RefreshHUDData()
     end
 end
 
-local function QueueHUDRefresh(delay)
-    if not IsHUDEnabled() or (frame and not frame:IsShown()) then
-        hudDirty = true
-        return
-    end
-    if hudRefreshQueued then
-        return
-    end
-    hudRefreshQueued = true
-    local function RunQueuedRefresh()
-        hudRefreshQueued = false
-        if not IsHUDEnabled() or (frame and not frame:IsShown()) then
-            hudDirty = true
-            return
-        end
-        RefreshHUDData()
-    end
-    if C_Timer and type(C_Timer.After) == "function" then
-        C_Timer.After(delay or 0, RunQueuedRefresh)
-    else
-        RunQueuedRefresh()
-    end
-end
-
-ns.QueueHUDRefresh = QueueHUDRefresh
-
-function ns.Refresh()
-    QueueHUDRefresh(0)
-end
-
 function ns.RefreshHUDData()
     RefreshHUDData()
 end
 
-function ns.ApplyHUDPosition()
-    if IsHUDVisible() then
-        ApplyHUDPosition()
+function ns.GetHUDSnapshot(refresh)
+    if refresh ~= false then
+        RefreshHUDData()
     end
-end
-
-function ns.ApplyHUDScale()
-    if IsHUDVisible() then
-        ApplyHUDScale()
-    end
+    return hudSnapshot, GetDB().showRows
 end
 
 function ns.ApplyHUDStyle()
-    ApplyHUDStyle()
-end
-
-function ns.ApplyHUDLayout()
-    if IsHUDVisible() then
-        ApplyHUDLayout()
-    end
-end
-
-function ns.ApplyHUDVisibility()
-    ns.SetHUDShown(IsHUDEnabled())
-end
-
-function ns.ApplySettings()
-    if frame then
-        ApplyHUDStyle()
-        if IsHUDVisible() then
-            ApplyHUDPosition()
-            ApplyHUDScale()
-            ApplyHUDLayout()
-        end
-    end
-    if ns.ApplyMythicDetailSettings then
-        ns.ApplyMythicDetailSettings()
-    end
-end
-
-function ns.ResetPosition()
-    local db = GetDB()
-    db.point = DEFAULTS.point
-    db.relativePoint = DEFAULTS.relativePoint
-    db.x = DEFAULTS.x
-    db.y = DEFAULTS.y
-    if IsHUDVisible() then
-        ApplyHUDPosition()
+    if ns.RefreshMeetingStoneIntegration then
+        ns.RefreshMeetingStoneIntegration("style")
     end
 end
 
@@ -998,53 +667,25 @@ function ns.GetDB()
     return GetDB()
 end
 
-function ns.IsHUDCreated()
-    return hudCreated and frame ~= nil
-end
-
-function ns.IsHUDVisible()
-    return IsHUDVisible() and true or false
-end
-
 function ns.SetHUDShown(enabled)
     local currentDB = GetDB()
     currentDB.showHUD = enabled == true
 
-    if currentDB.showHUD then
-        CreateHUD()
-        ApplyHUDPosition()
-        ApplyHUDScale()
-        ApplyHUDStyle()
-        ApplyHUDLayout()
-        frame:Show()
-        hudDirty = true
-        QueueHUDRefresh(0)
-    else
-        hudDirty = true
-        if frame then
-            frame:Hide()
-        end
+    if ns.RefreshMeetingStoneIntegration then
+        ns.RefreshMeetingStoneIntegration("visibility")
     end
 end
 
-function ns.SetShowHUD(value)
-    ns.SetHUDShown(value)
+function ns.IsTeleportAnnouncementEnabled()
+    return GetDB().announceTeleport ~= false
 end
 
-function ns.SetLocked(value)
-    GetDB().locked = value == true
+function ns.SetTeleportAnnouncementEnabled(enabled)
+    GetDB().announceTeleport = enabled == true
 end
 
 function ns.SetDetailEnabled(value)
     GetDB().enableMythicDetail = value == true
-end
-
-function ns.SetHUDWidth(value)
-    GetDB().width = Util.ClampNumber(value, 220, 420, DEFAULTS.width)
-end
-
-function ns.SetHUDScale(value)
-    GetDB().scale = Util.ClampNumber(value, 0.75, 1.50, DEFAULTS.scale)
 end
 
 function ns.SetHUDBorderAlpha(value)
@@ -1073,6 +714,9 @@ end
 function ns.SetRowVisible(key, value)
     if DEFAULT_ROW_VISIBILITY[key] ~= nil then
         GetDB().showRows[key] = value == true
+        if ns.RefreshMeetingStoneIntegration then
+            ns.RefreshMeetingStoneIntegration("profile")
+        end
     end
 end
 
@@ -1087,22 +731,6 @@ function ns.GetHUDVisualSettings()
         borderAlpha = a,
         backgroundAlpha = db.backgroundAlpha,
     }
-end
-
-function ns.GetHUDAccentColor()
-    return GetHUDAccentColor()
-end
-
-function ns.GetDetailAccentColor()
-    return GetDetailAccentColor()
-end
-
-function ns.GetDetailBorderAlpha()
-    return GetDB().detailBorderAlpha
-end
-
-function ns.GetDetailBackgroundAlpha()
-    return GetDB().detailBackgroundAlpha
 end
 
 function ns.GetDetailVisualSettings()
@@ -1138,16 +766,8 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
             englishTextWarningPrinted = true
             print(L.ADDON_TITLE .. ": English UI text was overwritten by another addon or an outdated build.")
         end
-        if IsHUDEnabled() then
-            ns.SetHUDShown(true)
-        else
-            hudDirty = true
-        end
         if ns.InitializeSettings then
             ns.InitializeSettings()
-        end
-        if ns.InitializeMythicDetail then
-            ns.InitializeMythicDetail()
         end
         local API = _G.QFXMythicRankData
         if API and type(API.RegisterCallback) == "function" then
@@ -1157,32 +777,21 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
                     ns.RefreshRegionSelector()
                 end
                 if region == selectedRegion then
-                    hudDirty = true
-                    if IsHUDVisible() then
-                        QueueHUDRefresh(0)
+                    if ns.RefreshMeetingStoneIntegration then
+                        ns.RefreshMeetingStoneIntegration("profile")
                     end
                 end
             end)
         end
     elseif event == "PLAYER_ENTERING_WORLD" then
-        hudDirty = true
-        if IsHUDVisible() then
-            QueueHUDRefresh(1)
-        else
-            UpdateDailyScoreStateOnly()
-        end
+        UpdateDailyScoreStateOnly()
         if ns.HandleMythicDetailEvent then
             ns.HandleMythicDetailEvent(event, arg1)
         end
     elseif event == "CHALLENGE_MODE_COMPLETED" then
-        hudDirty = true
-        if IsHUDVisible() then
-            QueueHUDRefresh(2)
-        elseif C_Timer and type(C_Timer.After) == "function" then
+        if C_Timer and type(C_Timer.After) == "function" then
             C_Timer.After(2, function()
-                if not IsHUDVisible() then
-                    UpdateDailyScoreStateOnly()
-                end
+                UpdateDailyScoreStateOnly()
             end)
         else
             UpdateDailyScoreStateOnly()

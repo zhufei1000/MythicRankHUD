@@ -5,30 +5,32 @@ local Util = ns.Util
 local Resources = {}
 ns.MythicDetailResources = Resources
 
--- Verified in the live WoW 12.0.7 client on 2026-07-16 with
--- C_CurrencyInfo.GetCurrencyInfo. All six entries are character currencies.
--- Verified iconFileIDs: 3347=7639523, 3345=7639521, 3418=7658128,
--- 3343=7639519, 3341=7639525, 3378=4622294. Icons are still read from
--- the API at runtime so client-side asset changes do not require an update.
--- The inactive duplicate currency 3513 is intentionally not used: the live
--- client returned discovered=false and quantity=0 while currency 3418 is the
--- discovered entry shown in Blizzard's currency panel.
+-- Midnight Season 2 Mistcrests use the character-currency IDs 3442-3446.
+-- The similarly named IDs 3437-3441 are non-collectible duplicates with a
+-- maximum quantity of zero and must not be used for the displayed balance.
+-- Icons and localized names are read from C_CurrencyInfo at runtime.
+-- Season 2 keeps Dawnlight Manaflux 3378 replaced by Venomblight Manaflux
+-- 3465, while the live collectible Voidcore stays on the Season 1 entry 3418
+-- (confirmed on the live client). IDs 3511 and 3513 are unused duplicates in
+-- the client data and must not be used for the displayed balance.
 local RESOURCE_ORDER = {
     "mythic",
     "heroic",
-    "voidCore",
     "champion",
     "veteran",
-    "manaSolvent",
+    "adventurer",
+    "voidCore",
+    "manaflux",
 }
 
 local RESOURCE_DEFINITIONS = {
-    mythic = { resourceType = "currency", id = 3347 },
-    heroic = { resourceType = "currency", id = 3345 },
+    mythic = { resourceType = "currency", id = 3446 },
+    heroic = { resourceType = "currency", id = 3445 },
     voidCore = { resourceType = "currency", id = 3418 },
-    champion = { resourceType = "currency", id = 3343 },
-    veteran = { resourceType = "currency", id = 3341 },
-    manaSolvent = { resourceType = "currency", id = 3378 },
+    champion = { resourceType = "currency", id = 3444 },
+    veteran = { resourceType = "currency", id = 3443 },
+    manaflux = { resourceType = "currency", id = 3465 },
+    adventurer = { resourceType = "currency", id = 3442 },
 }
 
 local TRACKED_CURRENCIES = {}
@@ -75,7 +77,7 @@ function Resources.NormalizeResourceQuantity(value)
     return math.floor(numberValue)
 end
 
-local function GetCurrencyResource(key, definition, resource)
+local function GetCurrencyResource(key, definition, resource, quantityOverride)
     resource = resource or {}
     Util.WipeArray(resource)
     resource.key = key
@@ -102,13 +104,22 @@ local function GetCurrencyResource(key, definition, resource)
     if resource.discovered == true then
         resource.quantity = Resources.NormalizeResourceQuantity(info.quantity)
     end
+    local normalizedOverride = Resources.NormalizeResourceQuantity(quantityOverride)
+    if normalizedOverride ~= nil then
+        -- CURRENCY_DISPLAY_UPDATE includes the authoritative post-change
+        -- quantity. Prefer it because GetCurrencyInfo can briefly return the
+        -- pre-spend value while the synchronous event is being handled.
+        resource.quantity = normalizedOverride
+    end
     return resource
 end
 
-function Resources.GetAll(result)
+function Resources.GetAll(result, quantityOverrides)
     result = result or {}
     for index, key in ipairs(RESOURCE_ORDER) do
-        result[index] = GetCurrencyResource(key, RESOURCE_DEFINITIONS[key], result[index])
+        local definition = RESOURCE_DEFINITIONS[key]
+        local quantityOverride = type(quantityOverrides) == "table" and quantityOverrides[definition.id] or nil
+        result[index] = GetCurrencyResource(key, definition, result[index], quantityOverride)
     end
     for index = #RESOURCE_ORDER + 1, #result do
         result[index] = nil
@@ -128,12 +139,12 @@ function Resources.GetIndexForKey(key)
     return RESOURCE_INDEX_BY_KEY[key]
 end
 
-function Resources.RefreshOne(currencyID, resource)
+function Resources.RefreshOne(currencyID, resource, quantityOverride)
     local key = Resources.GetKeyForCurrencyID(currencyID)
     if not key then
         return nil
     end
-    return GetCurrencyResource(key, RESOURCE_DEFINITIONS[key], resource)
+    return GetCurrencyResource(key, RESOURCE_DEFINITIONS[key], resource, quantityOverride)
 end
 
 function Resources.IsTrackedCurrencyID(currencyID)

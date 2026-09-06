@@ -202,38 +202,3 @@ function Statistics.BuildSingle(mapIDs, runs, ready, prefix)
     }
 end
 
-function Statistics.Build(mapIDs, seasonRuns, weeklyRuns, seasonReady, weeklyReady)
-    local season = AggregateRuns(mapIDs, seasonRuns, seasonReady)
-    local weekly = AggregateRuns(mapIDs, weeklyRuns, weeklyReady)
-    local byMapID = {}
-
-    for _, mapID in ipairs(season.order) do
-        local seasonRow = season.rows[mapID]
-        local weeklyRow = weekly.rows[mapID] or {}
-        byMapID[mapID] = {
-            mapID = mapID,
-            seasonTotal = seasonRow.total,
-            seasonTimed = seasonRow.timed,
-            seasonOvertime = seasonRow.overtime,
-            weeklyTotal = weeklyRow.total,
-            weeklyTimed = weeklyRow.timed,
-            weeklyOvertime = weeklyRow.overtime,
-        }
-    end
-
-    return {
-        byMapID = byMapID,
-        seasonAvailable = season.available,
-        weeklyAvailable = weekly.available,
-        seasonSummary = {
-            seasonTotal = season.summary.total,
-            seasonTimed = season.summary.timed,
-            seasonOvertime = season.summary.overtime,
-        },
-        weeklySummary = {
-            weeklyTotal = weekly.summary.total,
-            weeklyTimed = weekly.summary.timed,
-            weeklyOvertime = weekly.summary.overtime,
-        },
-    }
-end

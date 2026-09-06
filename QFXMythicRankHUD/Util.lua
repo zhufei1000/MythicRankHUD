@@ -79,9 +79,8 @@ local function RoundNumber(value)
     return math.floor(value + 0.5)
 end
 
--- The data API's normal rank estimate stops at the published Top 40% cutoff,
--- even though the data pack also contains ranked achievement cutoff nodes.
--- Use those nodes to extend the same logarithmic rank interpolation downward.
+-- The standard data API stops its single-rank estimate at the Top 40% line,
+-- while the CN data pack also exposes ranked achievement cutoff nodes below it.
 function Util.EstimateRankBelowTop40(API, region, score, faction)
     local normalizedScore = Util.SafeNumber(score)
     if type(API) ~= "table"
@@ -198,14 +197,6 @@ function Util.EstimateRankBelowTop40(API, region, score, faction)
     end
 
     return nil
-end
-
-function Util.NormalizeNonNegativeInteger(value)
-    local numberValue = Util.SafeNumber(value)
-    if not numberValue or numberValue < 0 then
-        return nil
-    end
-    return math.floor(numberValue)
 end
 
 function Util.WipeArray(array)

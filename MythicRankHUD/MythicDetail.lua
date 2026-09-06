@@ -636,20 +636,22 @@ local function RefreshVaultUI()
         local row = side.vaultRows[index]
         local category = categories[key]
         local available = category and category.available == true
-        local progress = available and Util.ClampNumber(category.progress, 0, 8, 0) or 0
-        row.bar:SetMinMaxValues(0, 8)
+        local fallbackMaximum = key == "raid" and 6 or 8
+        local maximum = math.max(1, Util.SafeNumber(category and category.maximum) or fallbackMaximum)
+        local progress = available and Util.ClampNumber(category.progress, 0, maximum, 0) or 0
+        row.bar:SetMinMaxValues(0, maximum)
         row.bar:SetValue(progress)
         if not available then
             row.bar:SetStatusBarColor(MUTED_R, MUTED_G, MUTED_B, 0.45)
-            row.value:SetText("--/8")
+            row.value:SetText("--/" .. FormatInteger(maximum))
             SetValueColor(row.value, "muted")
-        elseif progress >= 8 then
+        elseif progress >= maximum then
             row.bar:SetStatusBarColor(GREEN_R, GREEN_G, GREEN_B, 0.9)
-            row.value:SetText(FormatInteger(progress) .. "/8")
+            row.value:SetText(FormatInteger(progress) .. "/" .. FormatInteger(maximum))
             SetValueColor(row.value, "timed")
         else
             row.bar:SetStatusBarColor(GOLD_R, GOLD_G, GOLD_B, 0.9)
-            row.value:SetText(FormatInteger(progress) .. "/8")
+            row.value:SetText(FormatInteger(progress) .. "/" .. FormatInteger(maximum))
             SetValueColor(row.value, "gold")
         end
         row:Show()
@@ -1109,7 +1111,8 @@ local function RefreshDirtyDetailSections()
     if refreshKeystone or refreshSeasonInfo then
         RefreshKeystoneUI()
     end
-    if refreshVault then
+    local cachedVault = Data.GetCachedSection and Data.GetCachedSection("vault")
+    if refreshVault or (cachedVault and cachedVault.valid) then
         RefreshVaultUI()
     end
     if refreshResources then
@@ -1163,6 +1166,9 @@ local function SelectRegion(region)
     end
     if ns.RefreshHUDData then
         ns.RefreshHUDData()
+    end
+    if ns.RefreshMeetingStoneIntegration then
+        ns.RefreshMeetingStoneIntegration("profile")
     end
     if detailFrame and detailFrame:IsShown() then
         QueueDetailRefresh(0)
@@ -1283,7 +1289,7 @@ local function CreateVaultProgressRow(parent, labelText)
     row.bar:SetPoint("TOPLEFT", row.background, "TOPLEFT", 0, 0)
     row.bar:SetPoint("BOTTOMRIGHT", row.background, "BOTTOMRIGHT", 0, 0)
     row.bar:SetStatusBarTexture("Interface\\Buttons\\WHITE8X8")
-    row.bar:SetMinMaxValues(0, 8)
+    row.bar:SetMinMaxValues(0, 1)
     row.value = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     row.value:SetPoint("RIGHT", row, "RIGHT", 0, 0)
     row.value:SetWidth(valueWidth)
@@ -1522,7 +1528,7 @@ local function CreateDetailFrame()
 
     local dataSection = CreateFrame("Frame", nil, frame)
     dataSection:SetPoint("TOPLEFT", frame, "TOPLEFT", 20, -50)
-    dataSection:SetSize(360, 164)
+    dataSection:SetSize(360, 184)
     AddBackgroundLayer(frame, dataSection, 0.055)
     frame.dataDate = dataSection:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     frame.dataDate:SetPoint("TOPLEFT", dataSection, "TOPLEFT", 4, -2)
@@ -1549,6 +1555,7 @@ local function CreateDetailFrame()
     frame.resourceUI.buttons[4] = CreateResourceCell(dataSection, 4, -124)
     frame.resourceUI.buttons[5] = CreateResourceCell(dataSection, 124, -124)
     frame.resourceUI.buttons[6] = CreateResourceCell(dataSection, 244, -124)
+    frame.resourceUI.buttons[7] = CreateResourceCell(dataSection, 4, -160)
     for index, key in ipairs(Resources.RESOURCE_ORDER) do
         local button = frame.resourceUI.buttons[index]
         button.resourceKey = key
@@ -1683,6 +1690,7 @@ local function CreateDetailFrame()
         ApplyPosition()
         ApplyVisualSettings()
         RefreshDetailHeader()
+        RefreshVaultUI()
         if Data and Data.HasDirtyData and Data.HasDirtyData() then
             if Data.IsDirty("mapMeta") and Data.RequestData then
                 Data.RequestData()
@@ -1729,24 +1737,15 @@ function ns.ToggleMythicDetail()
     end
 end
 
-function ns.ApplyMythicDetailSettings()
-    if not detailFrame then
+function ns.OpenMythicDetail()
+    local db = ns.GetDB()
+    if db.enableMythicDetail == false then
         return
     end
-    if ns.GetDB().enableMythicDetail == false then
-        detailFrame:Hide()
+    if type(InCombatLockdown) == "function" and InCombatLockdown() then
+        return
     end
-    ApplyScale()
-    ApplyPosition()
-    ApplyVisualSettings()
-end
-
-function ns.ApplyDetailScale()
-    ApplyScale()
-end
-
-function ns.ApplyDetailPosition()
-    ApplyPosition()
+    CreateDetailFrame():Show()
 end
 
 function ns.ApplyDetailStyle()
@@ -1756,12 +1755,6 @@ end
 function ns.ApplyDetailFeatureState()
     if detailFrame and ns.GetDB().enableMythicDetail == false then
         detailFrame:Hide()
-    end
-end
-
-function ns.ApplyDetailLayout()
-    if detailFrame and detailFrame:IsShown() then
-        ApplySidePanelLayout()
     end
 end
 
@@ -1777,8 +1770,8 @@ RegisterDetailEvents = function()
     eventFrame:RegisterEvent("CURRENCY_DISPLAY_UPDATE")
     eventFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
     eventFrame:RegisterEvent("UI_SCALE_CHANGED")
-    eventFrame:SetScript("OnEvent", function(_, event, arg1)
-        ns.HandleMythicDetailEvent(event, arg1)
+    eventFrame:SetScript("OnEvent", function(_, event, arg1, arg2)
+        ns.HandleMythicDetailEvent(event, arg1, arg2)
     end)
 
     local API = _G.QFXMythicRankData
@@ -1800,15 +1793,11 @@ RegisterDetailEvents = function()
     detailEventsRegistered = true
 end
 
-function ns.InitializeMythicDetail()
-    -- Detail UI and its dedicated events are initialized on first open.
-end
-
 function ns.IsMythicDetailCreated()
     return detailFrame ~= nil
 end
 
-function ns.HandleMythicDetailEvent(event, arg1)
+function ns.HandleMythicDetailEvent(event, arg1, arg2)
     if not detailFrame then
         return
     end
@@ -1817,7 +1806,7 @@ function ns.HandleMythicDetailEvent(event, arg1)
         local resourceKey = Resources and Resources.GetKeyForCurrencyID(arg1) or nil
         if resourceKey then
             if detailFrame and detailFrame:IsShown() then
-                local resource = Data.RefreshOneResource(arg1)
+                local resource = Data.RefreshOneResource(arg1, arg2)
                 if resource then
                     UpdateResourceCell(resource.key, resource)
                 else

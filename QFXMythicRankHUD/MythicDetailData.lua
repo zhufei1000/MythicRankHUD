@@ -26,7 +26,6 @@ local cache = {
         endsAt = nil,
         blizzardSeasonID = nil,
         dataVersion = nil,
-        dungeonByChallengeModeID = {},
     },
     ranking = { valid = false, result = { available = false } },
     cutoffHistory = {
@@ -48,7 +47,7 @@ local cache = {
     vault = {
         valid = false,
         categories = {
-            raid = { available = false, progress = 0, maximum = 8 },
+            raid = { available = false, progress = 0, maximum = 6 },
             mythicPlus = { available = false, progress = 0, maximum = 8 },
             world = { available = false, progress = 0, maximum = 8 },
         },
@@ -83,9 +82,9 @@ local SECTION_ORDER = {
 }
 
 local VAULT_CATEGORY_DEFS = {
-    { key = "raid", enumKey = "Raid" },
-    { key = "mythicPlus", enumKey = "Activities" },
-    { key = "world", enumKey = "World" },
+    { key = "raid", enumKey = "Raid", fallbackMaximum = 6 },
+    { key = "mythicPlus", enumKey = "Activities", fallbackMaximum = 8 },
+    { key = "world", enumKey = "World", fallbackMaximum = 8 },
 }
 
 local ACHIEVEMENT_DEFS = {
@@ -125,6 +124,9 @@ local function BuildAchievementTargets(API, region)
     end
     for _, definition in ipairs(ACHIEVEMENT_DEFS) do
         local ok, raw = pcall(API.GetAchievementCutoff, API, region, definition.key)
+        if (not ok or raw == nil) then
+            ok, raw = pcall(API.GetAchievementCutoff, API, definition.key)
+        end
         local value = SafeTable(raw)
         local threshold = value and SafeNumber(value.thresholdScore or value.score)
             or SafeNumber(raw)
@@ -248,12 +250,6 @@ end
 
 function Data.MarkDirty(section)
     if dirty[section] ~= nil then
-        dirty[section] = true
-    end
-end
-
-function Data.MarkAllDirty()
-    for _, section in ipairs(SECTION_ORDER) do
         dirty[section] = true
     end
 end
@@ -418,14 +414,12 @@ function Data.RefreshSeasonInfo()
     section.endsAt = nil
     section.blizzardSeasonID = nil
     section.dataVersion = nil
-    Util.WipeArray(section.dungeonByChallengeModeID)
     section.available = false
 
     local API = _G.QFXMythicRankData
     local region = ns.GetSelectedRegion()
-    if type(API) == "table" and region then
-        local rawSeason = type(API.GetSeasonInfo) == "function"
-            and SafeTable(API:GetSeasonInfo(region)) or nil
+    if type(API) == "table" and type(API.GetSeasonInfo) == "function" then
+        local rawSeason = SafeTable(API:GetSeasonInfo(region))
         local metadata = type(API.GetMetadata) == "function"
             and SafeTable(API:GetMetadata(region)) or nil
         if rawSeason then
@@ -438,19 +432,6 @@ function Data.RefreshSeasonInfo()
         end
         section.state = metadata and SafeString(metadata.seasonState) or nil
         section.dataVersion = metadata and SafeString(metadata.dataVersion) or nil
-        if type(API.GetSeasonDungeons) == "function" then
-            local dungeons = SafeTable(API:GetSeasonDungeons(region))
-            for _, rawDungeon in ipairs(dungeons or {}) do
-                local dungeon = SafeTable(rawDungeon)
-                local mapID = dungeon and SafeNumber(dungeon.challengeModeID) or nil
-                if mapID then
-                    section.dungeonByChallengeModeID[mapID] = {
-                        name = SafeString(dungeon.name),
-                        shortName = SafeString(dungeon.shortName),
-                    }
-                end
-            end
-        end
         section.available = section.shortName ~= nil
             or section.name ~= nil
             or section.startsAt ~= nil
@@ -458,15 +439,6 @@ function Data.RefreshSeasonInfo()
     section.valid = true
     dirty.seasonInfo = false
     return section
-end
-
-function Data.GetEnglishDungeonInfo(mapID)
-    local safeMapID = SafeNumber(mapID)
-    local info = safeMapID and cache.seasonInfo.dungeonByChallengeModeID[safeMapID] or nil
-    if not info then
-        return nil, nil
-    end
-    return SafeString(info.name), SafeString(info.shortName)
 end
 
 local function ParseDataVersionTimestamp(dataVersion)
@@ -591,7 +563,6 @@ function Data.RefreshCutoffHistory()
     if type(API) == "table"
         and type(API.GetCutoff) == "function"
         and type(API.GetCutoffHistory) == "function"
-        and region
     then
         local metadata = type(API.GetMetadata) == "function" and SafeTable(API:GetMetadata(region)) or nil
         for _, definition in ipairs(RankTarget.CUTOFF_DEFS) do
@@ -712,19 +683,23 @@ function Data.RefreshVault()
         local category = cache.vault.categories[definition.key]
         category.available = false
         category.progress = 0
-        category.maximum = 8
+        category.maximum = definition.fallbackMaximum
         if apiAvailable then
             local activityType = SafeNumber(Enum.WeeklyRewardChestThresholdType[definition.enumKey])
             local activities = activityType and SafeTable(C_WeeklyRewards.GetActivities(activityType)) or nil
             if activities then
                 category.available = true
                 local progress = 0
+                local maximum = 0
                 for _, rawActivity in ipairs(activities) do
                     local activity = SafeTable(rawActivity)
                     local value = activity and SafeNumber(activity.progress) or 0
+                    local threshold = activity and SafeNumber(activity.threshold) or 0
                     progress = math.max(progress, value or 0)
+                    maximum = math.max(maximum, threshold or 0)
                 end
-                category.progress = Util.ClampNumber(progress, 0, 8, 0)
+                category.maximum = maximum > 0 and maximum or definition.fallbackMaximum
+                category.progress = Util.ClampNumber(progress, 0, category.maximum, 0)
             end
         end
     end
@@ -746,7 +721,7 @@ function Data.RefreshResources()
     return cache.resources
 end
 
-function Data.RefreshOneResource(currencyID)
+function Data.RefreshOneResource(currencyID, quantityOverride)
     if dirty.resources or not cache.resources.valid or not Resources then
         return nil
     end
@@ -755,7 +730,7 @@ function Data.RefreshOneResource(currencyID)
     if not key or not index then
         return nil
     end
-    local resource = Resources.RefreshOne(currencyID, cache.resources.byKey[key])
+    local resource = Resources.RefreshOne(currencyID, cache.resources.byKey[key], quantityOverride)
     if not resource then
         return nil
     end
@@ -764,93 +739,8 @@ function Data.RefreshOneResource(currencyID)
     return resource
 end
 
-function Data.RefreshSection(section)
-    if section == "mapMeta" then
-        return Data.RefreshMapMetadata()
-    elseif section == "score" then
-        return Data.RefreshScoreData()
-    elseif section == "seasonInfo" then
-        return Data.RefreshSeasonInfo()
-    elseif section == "ranking" then
-        return Data.RefreshRankingData()
-    elseif section == "cutoffHistory" then
-        return Data.RefreshCutoffHistory()
-    elseif section == "seasonStats" then
-        return Data.RefreshSeasonStatistics()
-    elseif section == "weeklyStats" then
-        return Data.RefreshWeeklyStatistics()
-    elseif section == "keystone" then
-        return Data.RefreshKeystone()
-    elseif section == "vault" then
-        return Data.RefreshVault()
-    elseif section == "resources" then
-        return Data.RefreshResources()
-    end
-end
-
 function Data.RequestData()
     if C_MythicPlus and type(C_MythicPlus.RequestMapInfo) == "function" then
         C_MythicPlus.RequestMapInfo()
     end
 end
-
-Data.RequestMapInfo = Data.RequestData
-
-local snapshot = {
-    maps = {},
-    statistics = {
-        byMapID = {},
-        seasonSummary = {},
-        weeklySummary = {},
-    },
-}
-
-function Data.GetSnapshot()
-    local mapRows = snapshot.maps
-    local statsByMapID = snapshot.statistics.byMapID
-    Util.WipeArray(statsByMapID)
-    for index, meta in ipairs(cache.mapMeta.ordered) do
-        local row = mapRows[index]
-        if not row then
-            row = {}
-            mapRows[index] = row
-        end
-        local scoreInfo = cache.score.maps[meta.mapID] or {}
-        local season = cache.seasonStats.byMapID[meta.mapID] or {}
-        local weekly = cache.weeklyStats.byMapID[meta.mapID] or {}
-        row.mapID = meta.mapID
-        row.name = meta.name
-        row.timeLimit = meta.timeLimit
-        row.texture = meta.texture
-        row.level = scoreInfo.level
-        row.dungeonScore = scoreInfo.dungeonScore
-        row.seasonTotal = season.seasonTotal
-        row.seasonTimed = season.seasonTimed
-        row.seasonOvertime = season.seasonOvertime
-        row.weeklyTotal = weekly.weeklyTotal
-        row.weeklyTimed = weekly.weeklyTimed
-        row.weeklyOvertime = weekly.weeklyOvertime
-        statsByMapID[meta.mapID] = row
-    end
-    for index = #cache.mapMeta.ordered + 1, #mapRows do
-        mapRows[index] = nil
-    end
-
-    snapshot.score = cache.score.overall
-    snapshot.ranking = cache.ranking.result
-    snapshot.keystone = cache.keystone.data
-    snapshot.highestLevel = cache.score.highestLevel
-    snapshot.statistics.seasonAvailable = cache.seasonStats.available
-    snapshot.statistics.weeklyAvailable = cache.weeklyStats.available
-    snapshot.statistics.seasonSummary = cache.seasonStats.summary
-    snapshot.statistics.weeklySummary = cache.weeklyStats.summary
-    snapshot.reportedWeeklyTotal = cache.weeklyStats.reportedTotal
-    snapshot.vaultCategories = cache.vault.categories
-    snapshot.resources = cache.resources.ordered
-    return snapshot
-end
-
-Data.IsAccessible = Util.IsAccessible
-Data.SafeNumber = SafeNumber
-Data.SafeString = SafeString
-Data.SECTION_ORDER = SECTION_ORDER

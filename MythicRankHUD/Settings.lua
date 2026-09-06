@@ -3,10 +3,8 @@ local L = ns.L
 
 local categoryID
 local showHUDCheck
-local lockCheck
+local announceTeleportCheck
 local detailCheck
-local scaleSlider
-local widthSlider
 local borderAlphaSlider
 local backgroundAlphaSlider
 local detailBorderAlphaSlider
@@ -16,7 +14,6 @@ local rowChecks = {}
 local refreshingControls = false
 local pendingHUDStyle = false
 local pendingDetailStyle = false
-local pendingHUDLayout = false
 local controlsCreated = false
 
 local function PrintAddonMessage(message)
@@ -43,12 +40,21 @@ local function PrintDebugInfo()
     print("Runs label: " .. tostring(L.DETAIL_COLUMN_TOTAL))
     print("Raid label: " .. tostring(L.VAULT_RAID))
     print("Trend label: " .. tostring(L.DETAIL_CUTOFF_1))
+    local integration = ns.MeetingStoneIntegration
+    if type(integration) == "table" then
+        local host = integration.mainPanel
+        local hostShown = type(host) == "table" and host.IsShown and host:IsShown()
+        local db = ns.GetDB and ns.GetDB() or {}
+        print("Group board host: " .. tostring(integration.hostKey or "None"))
+        print("Host frame found: " .. tostring(host ~= nil) .. ", shown: " .. tostring(hostShown == true))
+        print("HUD enabled: " .. tostring(not db or db.showHUD ~= false))
+        print("PremadeGroupBoardFrame exists: " .. tostring(_G.PremadeGroupBoardFrame ~= nil))
+        print("Attach attempts: " .. tostring(integration.attachAttempts or 0)
+            .. ", watcher scheduled: " .. tostring(integration.attachCheckScheduled == true))
+    end
 end
 
 local function QueueHUDStyleApply()
-    if ns.IsHUDCreated and not ns.IsHUDCreated() then
-        return
-    end
     if pendingHUDStyle then
         return
     end
@@ -75,25 +81,6 @@ local function QueueDetailStyleApply()
     local function Apply()
         pendingDetailStyle = false
         ns.ApplyDetailStyle()
-    end
-    if C_Timer and type(C_Timer.After) == "function" then
-        C_Timer.After(0, Apply)
-    else
-        Apply()
-    end
-end
-
-local function QueueHUDLayoutApply()
-    if ns.IsHUDVisible and not ns.IsHUDVisible() then
-        return
-    end
-    if pendingHUDLayout then
-        return
-    end
-    pendingHUDLayout = true
-    local function Apply()
-        pendingHUDLayout = false
-        ns.ApplyHUDLayout()
     end
     if C_Timer and type(C_Timer.After) == "function" then
         C_Timer.After(0, Apply)
@@ -186,8 +173,8 @@ local function RefreshControls()
     if showHUDCheck then
         SetChecked(showHUDCheck, db.showHUD)
     end
-    if lockCheck then
-        SetChecked(lockCheck, db.locked)
+    if announceTeleportCheck then
+        SetChecked(announceTeleportCheck, db.announceTeleport ~= false)
     end
     if detailCheck then
         SetChecked(detailCheck, db.enableMythicDetail ~= false)
@@ -220,15 +207,6 @@ local function RefreshControls()
             string.format("%d%%", math.floor(db.detailBackgroundAlpha * 100 + 0.5))
         )
     end
-    if widthSlider then
-        widthSlider:SetValue(db.width)
-        SetSliderText(widthSlider, string.format(L.SETTINGS_WIDTH_VALUE, math.floor(db.width + 0.5)))
-    end
-    if scaleSlider then
-        scaleSlider:SetValue(db.scale)
-        SetSliderText(scaleSlider, string.format("%d%%", math.floor(db.scale * 100 + 0.5)))
-    end
-
     refreshingControls = false
 end
 
@@ -247,7 +225,7 @@ local function CreateSettingsPanel()
     scrollFrame:EnableMouseWheel(true)
 
     local content = CreateFrame("Frame", nil, scrollFrame)
-    content:SetSize(620, 940)
+    content:SetSize(620, 720)
     scrollFrame:SetScrollChild(content)
 
     scrollFrame:SetScript("OnMouseWheel", function(self, delta)
@@ -277,12 +255,12 @@ local function CreateSettingsPanel()
         ns.SetHUDShown(checked)
     end)
 
-    lockCheck = CreateCheckButton(content, 18, -92, L.SETTINGS_LOCK, function(checked)
-        ns.SetLocked(checked)
+    announceTeleportCheck = CreateCheckButton(content, 326, -56, L.SETTINGS_ANNOUNCE_TELEPORT, function(checked)
+        ns.SetTeleportAnnouncementEnabled(checked)
     end)
 
     local rowsLabel = content:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-    rowsLabel:SetPoint("TOPLEFT", content, "TOPLEFT", 20, -140)
+    rowsLabel:SetPoint("TOPLEFT", content, "TOPLEFT", 20, -104)
     rowsLabel:SetText(L.SETTINGS_VISIBLE_ROWS)
 
     for index, option in ipairs(ROW_OPTIONS) do
@@ -291,29 +269,26 @@ local function CreateSettingsPanel()
         local column = index <= 6 and 0 or 1
         local rowIndex = column == 0 and index or index - 6
         local x = column == 0 and 18 or 326
-        local y = -164 - ((rowIndex - 1) * 32)
+        local y = -128 - ((rowIndex - 1) * 32)
         local check = CreateCheckButton(content, x, y, L[optionLabel], function(checked)
             ns.SetRowVisible(optionKey, checked)
-            if ns.IsHUDVisible() then
-                ns.ApplyHUDLayout()
-            end
         end)
         rowChecks[optionKey] = check
     end
 
     local borderStyleLabel = content:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-    borderStyleLabel:SetPoint("TOPLEFT", content, "TOPLEFT", 20, -374)
+    borderStyleLabel:SetPoint("TOPLEFT", content, "TOPLEFT", 20, -340)
     borderStyleLabel:SetText(L.SETTINGS_BORDER_STYLE)
 
-    CreateBorderOption(content, 18, -398, "transparent", L.SETTINGS_BORDER_TRANSPARENT)
-    CreateBorderOption(content, 170, -398, "gold", L.SETTINGS_BORDER_GOLD)
-    CreateBorderOption(content, 300, -398, "class", L.SETTINGS_BORDER_CLASS)
+    CreateBorderOption(content, 18, -364, "transparent", L.SETTINGS_BORDER_TRANSPARENT)
+    CreateBorderOption(content, 170, -364, "gold", L.SETTINGS_BORDER_GOLD)
+    CreateBorderOption(content, 300, -364, "class", L.SETTINGS_BORDER_CLASS)
 
     local borderAlphaLabel = content:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-    borderAlphaLabel:SetPoint("TOPLEFT", content, "TOPLEFT", 20, -452)
+    borderAlphaLabel:SetPoint("TOPLEFT", content, "TOPLEFT", 20, -418)
     borderAlphaLabel:SetText(L.SETTINGS_BORDER_ALPHA)
 
-    borderAlphaSlider = CreateSlider(content, 24, -482, 240, "0%", "100%", 0, 1, 0.05, function(slider, value)
+    borderAlphaSlider = CreateSlider(content, 24, -448, 240, "0%", "100%", 0, 1, 0.05, function(slider, value)
         value = math.floor(value * 20 + 0.5) / 20
         SetSliderText(slider, string.format("%d%%", math.floor(value * 100 + 0.5)))
         if not refreshingControls then
@@ -323,10 +298,10 @@ local function CreateSettingsPanel()
     end)
 
     local backgroundAlphaLabel = content:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-    backgroundAlphaLabel:SetPoint("TOPLEFT", content, "TOPLEFT", 336, -452)
+    backgroundAlphaLabel:SetPoint("TOPLEFT", content, "TOPLEFT", 336, -418)
     backgroundAlphaLabel:SetText(L.SETTINGS_BACKGROUND_ALPHA)
 
-    backgroundAlphaSlider = CreateSlider(content, 340, -482, 240, "0%", "100%", 0, 1, 0.05, function(slider, value)
+    backgroundAlphaSlider = CreateSlider(content, 340, -448, 240, "0%", "100%", 0, 1, 0.05, function(slider, value)
         value = math.floor(value * 20 + 0.5) / 20
         SetSliderText(slider, string.format("%d%%", math.floor(value * 100 + 0.5)))
         if not refreshingControls then
@@ -335,49 +310,20 @@ local function CreateSettingsPanel()
         end
     end)
 
-    local widthLabel = content:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-    widthLabel:SetPoint("TOPLEFT", content, "TOPLEFT", 20, -558)
-    widthLabel:SetText(L.SETTINGS_WIDTH)
-
-    widthSlider = CreateSlider(content, 24, -588, 240, "220", "420", 220, 420, 2, function(slider, value)
-        value = math.floor(value / 2 + 0.5) * 2
-        SetSliderText(slider, string.format(L.SETTINGS_WIDTH_VALUE, value))
-        if not refreshingControls then
-            ns.SetHUDWidth(value)
-            QueueHUDLayoutApply()
-        end
-    end)
-
-    local scaleLabel = content:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-    scaleLabel:SetPoint("TOPLEFT", content, "TOPLEFT", 336, -558)
-    scaleLabel:SetText(L.SETTINGS_SCALE)
-
-    scaleSlider = CreateSlider(content, 340, -588, 240, "75%", "150%", 0.75, 1.50, 0.05, function(slider, value)
-        value = math.floor(value * 20 + 0.5) / 20
-        SetSliderText(slider, string.format("%d%%", math.floor(value * 100 + 0.5)))
-        if not refreshingControls then
-            ns.SetHUDScale(value)
-            if ns.IsHUDVisible() then
-                ns.ApplyHUDScale()
-                ns.ApplyHUDPosition()
-            end
-        end
-    end)
-
     local detailGroupLabel = content:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-    detailGroupLabel:SetPoint("TOPLEFT", content, "TOPLEFT", 20, -674)
+    detailGroupLabel:SetPoint("TOPLEFT", content, "TOPLEFT", 20, -540)
     detailGroupLabel:SetText(L.SETTINGS_DETAIL_GROUP)
 
-    detailCheck = CreateCheckButton(content, 18, -700, L.SETTINGS_ENABLE_DETAIL, function(checked)
+    detailCheck = CreateCheckButton(content, 18, -566, L.SETTINGS_ENABLE_DETAIL, function(checked)
         ns.SetDetailEnabled(checked)
         ns.ApplyDetailFeatureState()
     end)
 
     local detailBorderAlphaLabel = content:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-    detailBorderAlphaLabel:SetPoint("TOPLEFT", content, "TOPLEFT", 20, -752)
+    detailBorderAlphaLabel:SetPoint("TOPLEFT", content, "TOPLEFT", 20, -618)
     detailBorderAlphaLabel:SetText(L.SETTINGS_DETAIL_BORDER_ALPHA)
 
-    detailBorderAlphaSlider = CreateSlider(content, 24, -782, 240, "0%", "100%", 0, 1, 0.05, function(slider, value)
+    detailBorderAlphaSlider = CreateSlider(content, 24, -648, 240, "0%", "100%", 0, 1, 0.05, function(slider, value)
         value = math.floor(value * 20 + 0.5) / 20
         SetSliderText(slider, string.format("%d%%", math.floor(value * 100 + 0.5)))
         if not refreshingControls then
@@ -387,10 +333,10 @@ local function CreateSettingsPanel()
     end)
 
     local detailBackgroundAlphaLabel = content:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-    detailBackgroundAlphaLabel:SetPoint("TOPLEFT", content, "TOPLEFT", 336, -752)
+    detailBackgroundAlphaLabel:SetPoint("TOPLEFT", content, "TOPLEFT", 336, -618)
     detailBackgroundAlphaLabel:SetText(L.SETTINGS_DETAIL_BACKGROUND_ALPHA)
 
-    detailBackgroundAlphaSlider = CreateSlider(content, 340, -782, 240, "0%", "100%", 0, 1, 0.05, function(slider, value)
+    detailBackgroundAlphaSlider = CreateSlider(content, 340, -648, 240, "0%", "100%", 0, 1, 0.05, function(slider, value)
         value = math.floor(value * 20 + 0.5) / 20
         SetSliderText(slider, string.format("%d%%", math.floor(value * 100 + 0.5)))
         if not refreshingControls then
@@ -399,15 +345,6 @@ local function CreateSettingsPanel()
         end
     end)
 
-    local reset = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
-    reset:SetSize(130, 24)
-    reset:SetPoint("TOPLEFT", content, "TOPLEFT", 20, -876)
-    reset:SetText(L.SETTINGS_RESET)
-    reset:SetScript("OnClick", function()
-        ns.ResetPosition()
-        RefreshControls()
-        PrintAddonMessage(L.SETTINGS_RESET_DONE)
-    end)
     end
 
     panel:SetScript("OnShow", function()
@@ -441,19 +378,10 @@ SlashCmdList.QFXMYTHICRANKHUDGLOBAL = function(message)
         ns.SetHUDShown(true)
     elseif command == "hide" then
         ns.SetHUDShown(false)
-    elseif command == "lock" then
-        ns.SetLocked(true)
-    elseif command == "unlock" then
-        ns.SetLocked(false)
-    elseif command == "reset" then
-        ns.ResetPosition()
     elseif command == "ranges" then
         local enabled = not (db.showRows.rankRange and db.showRows.percentileRange)
         ns.SetRowVisible("rankRange", enabled)
         ns.SetRowVisible("percentileRange", enabled)
-        if ns.IsHUDVisible() then
-            ns.ApplyHUDLayout()
-        end
     elseif command == "debug" then
         PrintDebugInfo()
     elseif command == "" then
