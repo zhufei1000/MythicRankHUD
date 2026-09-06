@@ -112,8 +112,6 @@ local SUMMARY_KEYS = {
 
 local SUMMARY_ROW_HEIGHT = 17
 local WEEKLY_LINE_HEIGHT = 18
-local TELEPORT_BAR_STRATA = "DIALOG"
-local TELEPORT_BAR_LEVEL = 100
 
 local function SafeNumber(value, fallback)
     if Util and type(Util.SafeNumber) == "function" then
@@ -481,6 +479,9 @@ local function CreateSeasonCard(parent)
     card:EnableMouse(true)
     card:RegisterForClicks("LeftButtonUp")
     card:SetAttribute("useOnKeyDown", false)
+    if type(card.SetToplevel) == "function" then
+        card:SetToplevel(true)
+    end
 
     card.background = card:CreateTexture(nil, "BACKGROUND")
     card.background:SetAllPoints()
@@ -584,8 +585,11 @@ local function CreateSeasonBar()
     if integration.seasonBar then return integration.seasonBar end
     local frame = CreateFrame("Frame", ADDON_NAME .. "GroupFinderSeasonBar", UIParent, "BackdropTemplate")
     frame:SetHeight(104)
-    frame:SetFrameStrata(TELEPORT_BAR_STRATA)
-    frame:SetFrameLevel(TELEPORT_BAR_LEVEL)
+    frame:SetFrameStrata("MEDIUM")
+    frame:SetFrameLevel(20)
+    if type(frame.SetToplevel) == "function" then
+        frame:SetToplevel(true)
+    end
     ApplyBackdrop(frame)
 
     frame.resourceItems = {}
@@ -1102,8 +1106,8 @@ local function PositionIntegration()
     local seasonBar = CreateSeasonBar()
     local strata = mainPanel.GetFrameStrata and mainPanel:GetFrameStrata()
     local level = mainPanel.GetFrameLevel and mainPanel:GetFrameLevel()
-    seasonBar:SetFrameStrata(TELEPORT_BAR_STRATA)
-    seasonBar:SetFrameLevel(TELEPORT_BAR_LEVEL)
+    if type(strata) == "string" then seasonBar:SetFrameStrata(strata) end
+    if type(level) == "number" then seasonBar:SetFrameLevel(level + 5) end
     seasonBar:ClearAllPoints()
     seasonBar:SetPoint("BOTTOM", mainPanel, "TOP", 0, 3)
     local hostWidth = mainPanel.GetWidth and SafeNumber(mainPanel:GetWidth()) or nil
