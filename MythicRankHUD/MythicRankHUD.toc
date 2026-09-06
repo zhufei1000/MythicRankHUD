@@ -4,6 +4,8 @@
 ## Author: QFX
 ## Version: 1.3.22
 ## IconTexture: Interface\Icons\Achievement_ChallengeMode_Gold
+# 启用 CurseForge 自动发布前，先创建项目，再把右侧项目页的数字 Project ID 填到下面并取消注释：
+# ## X-Curse-Project-ID: 123456
 ## OptionalDeps: GroupFinder, PremadeGroupBoard, MeetingStone_Happy, MeetingStoneHappy, MeetingStoneEX, MeetingStone, QFXMythicRankData_US, QFXMythicRankData_EU, QFXMythicRankData_KR, QFXMythicRankData_TW, QFXMythicRankData_CN
 ## SavedVariables: QFXMythicRankHUDGlobalDB
 

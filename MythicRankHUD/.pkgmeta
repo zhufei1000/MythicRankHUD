@@ -1,0 +1,4 @@
+# Build configuration for BigWigsMods/packager (used by the release workflow).
+# The workflow runs it with `-t MythicRankHUD`, so paths are relative to that folder.
+ignore:
+  - tests
