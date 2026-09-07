@@ -4,6 +4,9 @@ local L = ns.L
 local categoryID
 local showHUDCheck
 local announceTeleportCheck
+local announceRunGainCheck
+local announceMemberJoinCheck
+local announceDelaySlider
 local detailCheck
 local borderAlphaSlider
 local backgroundAlphaSlider
@@ -176,6 +179,16 @@ local function RefreshControls()
     if announceTeleportCheck then
         SetChecked(announceTeleportCheck, db.announceTeleport ~= false)
     end
+    if announceRunGainCheck then
+        SetChecked(announceRunGainCheck, db.announceRunGain ~= false)
+    end
+    if announceMemberJoinCheck then
+        SetChecked(announceMemberJoinCheck, db.announceMemberJoin ~= false)
+    end
+    if announceDelaySlider then
+        announceDelaySlider:SetValue(db.announceDelay or 5)
+        SetSliderText(announceDelaySlider, string.format(L.ANNOUNCE_DELAY_SECONDS, math.floor((db.announceDelay or 5) + 0.5)))
+    end
     if detailCheck then
         SetChecked(detailCheck, db.enableMythicDetail ~= false)
     end
@@ -225,7 +238,7 @@ local function CreateSettingsPanel()
     scrollFrame:EnableMouseWheel(true)
 
     local content = CreateFrame("Frame", nil, scrollFrame)
-    content:SetSize(620, 720)
+    content:SetSize(620, 780)
     scrollFrame:SetScrollChild(content)
 
     scrollFrame:SetScript("OnMouseWheel", function(self, delta)
@@ -259,6 +272,14 @@ local function CreateSettingsPanel()
         ns.SetTeleportAnnouncementEnabled(checked)
     end)
 
+    announceRunGainCheck = CreateCheckButton(content, 326, -88, L.SETTINGS_ANNOUNCE_RUN_GAIN, function(checked)
+        ns.SetRunGainAnnouncementEnabled(checked)
+    end)
+
+    announceMemberJoinCheck = CreateCheckButton(content, 326, -120, L.SETTINGS_ANNOUNCE_MEMBER_JOIN, function(checked)
+        ns.SetMemberWelcomeEnabled(checked)
+    end)
+
     local rowsLabel = content:CreateFontString(nil, "ARTWORK", "GameFontNormal")
     rowsLabel:SetPoint("TOPLEFT", content, "TOPLEFT", 20, -104)
     rowsLabel:SetText(L.SETTINGS_VISIBLE_ROWS)
@@ -269,7 +290,7 @@ local function CreateSettingsPanel()
         local column = index <= 6 and 0 or 1
         local rowIndex = column == 0 and index or index - 6
         local x = column == 0 and 18 or 326
-        local y = -128 - ((rowIndex - 1) * 32)
+        local y = (column == 0 and -128 or -152) - ((rowIndex - 1) * 32)
         local check = CreateCheckButton(content, x, y, L[optionLabel], function(checked)
             ns.SetRowVisible(optionKey, checked)
         end)
@@ -342,6 +363,18 @@ local function CreateSettingsPanel()
         if not refreshingControls then
             ns.SetDetailBackgroundAlpha(value)
             QueueDetailStyleApply()
+        end
+    end)
+
+    local announceDelayLabel = content:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+    announceDelayLabel:SetPoint("TOPLEFT", content, "TOPLEFT", 20, -694)
+    announceDelayLabel:SetText(L.SETTINGS_ANNOUNCE_DELAY)
+
+    announceDelaySlider = CreateSlider(content, 24, -724, 240, "0", "30", 0, 30, 1, function(slider, value)
+        value = math.floor(value + 0.5)
+        SetSliderText(slider, string.format(L.ANNOUNCE_DELAY_SECONDS, value))
+        if not refreshingControls then
+            ns.SetRunAnnounceDelay(value)
         end
     end)
 

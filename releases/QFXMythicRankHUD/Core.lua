@@ -21,6 +21,9 @@ local DEFAULTS = {
     showHUD = true,
     enableMythicDetail = true,
     announceTeleport = true,
+    announceRunGain = true,
+    announceMemberJoin = true,
+    announceDelay = 5,
     borderStyle = "gold",
     borderAlpha = 0.85,
     backgroundAlpha = 0.88,
@@ -117,6 +120,13 @@ local function InitializeDatabase()
     if type(db.announceTeleport) ~= "boolean" then
         db.announceTeleport = DEFAULTS.announceTeleport
     end
+    if type(db.announceRunGain) ~= "boolean" then
+        db.announceRunGain = DEFAULTS.announceRunGain
+    end
+    if type(db.announceMemberJoin) ~= "boolean" then
+        db.announceMemberJoin = DEFAULTS.announceMemberJoin
+    end
+    db.announceDelay = Util.ClampNumber(db.announceDelay, 0, 60, DEFAULTS.announceDelay)
     db.borderAlpha = Util.ClampNumber(db.borderAlpha, 0, 1, DEFAULTS.borderAlpha)
     db.backgroundAlpha = Util.ClampNumber(db.backgroundAlpha, 0, 1, DEFAULTS.backgroundAlpha)
     if not hadDetailBorderAlpha and oldDB then
@@ -693,6 +703,41 @@ end
 
 function ns.SetTeleportAnnouncementEnabled(enabled)
     GetDB().announceTeleport = enabled == true
+end
+
+function ns.IsRunGainAnnouncementEnabled()
+    return GetDB().announceRunGain ~= false
+end
+
+function ns.SetRunGainAnnouncementEnabled(enabled)
+    GetDB().announceRunGain = enabled == true
+end
+
+function ns.IsMemberWelcomeEnabled()
+    return GetDB().announceMemberJoin ~= false
+end
+
+function ns.SetMemberWelcomeEnabled(enabled)
+    GetDB().announceMemberJoin = enabled == true
+end
+
+function ns.GetRunAnnounceDelay()
+    return GetDB().announceDelay
+end
+
+function ns.SetRunAnnounceDelay(value)
+    GetDB().announceDelay = Util.ClampNumber(value, 0, 60, DEFAULTS.announceDelay)
+end
+
+function ns.GetDailyBaselineScore()
+    local state = GetDB().characters[GetCharacterKey()]
+    if type(state) == "table"
+        and state.dateKey == GetDateKey()
+        and type(state.baselineScore) == "number"
+    then
+        return state.baselineScore
+    end
+    return nil
 end
 
 function ns.SetHUDBorderAlpha(value)
