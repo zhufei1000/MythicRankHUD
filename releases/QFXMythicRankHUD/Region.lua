@@ -15,26 +15,6 @@ end
 
 ns.REGIONS = REGIONS
 
--- Current-season fallback names keep the international UI in English even
--- when the regional data pack is temporarily unavailable. The data pack's
--- season dungeon metadata remains the primary source so future seasons do not
--- require a HUD update merely to learn new abbreviations.
-local ENGLISH_DUNGEON_FALLBACKS = {
-    [249] = { name = "Kings' Rest", shortName = "KR" },
-    [250] = { name = "Temple of Sethraliss", shortName = "TOS" },
-    [399] = { name = "Ruby Life Pools", shortName = "RLP" },
-    [584] = { name = "The Blinding Vale", shortName = "BV" },
-    [585] = { name = "Voidscar Arena", shortName = "VSA" },
-    [586] = { name = "Den of Nalorakk", shortName = "DON" },
-    [587] = { name = "Murder Row", shortName = "MR" },
-    [588] = { name = "Altar of Fangs", shortName = "AOF" },
-}
-
-function ns.GetFallbackEnglishDungeonInfo(mapID)
-    local info = ENGLISH_DUNGEON_FALLBACKS[tonumber(mapID)]
-    return info and info.name or nil, info and info.shortName or nil
-end
-
 local function GetAPI()
     local API = _G.QFXMythicRankData
     return type(API) == "table" and API or nil

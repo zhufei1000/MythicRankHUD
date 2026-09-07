@@ -26,7 +26,6 @@ local cache = {
         endsAt = nil,
         blizzardSeasonID = nil,
         dataVersion = nil,
-        dungeonByChallengeModeID = {},
     },
     ranking = { valid = false, result = { available = false } },
     cutoffHistory = {
@@ -125,6 +124,9 @@ local function BuildAchievementTargets(API, region)
     end
     for _, definition in ipairs(ACHIEVEMENT_DEFS) do
         local ok, raw = pcall(API.GetAchievementCutoff, API, region, definition.key)
+        if (not ok or raw == nil) then
+            ok, raw = pcall(API.GetAchievementCutoff, API, definition.key)
+        end
         local value = SafeTable(raw)
         local threshold = value and SafeNumber(value.thresholdScore or value.score)
             or SafeNumber(raw)
@@ -412,14 +414,12 @@ function Data.RefreshSeasonInfo()
     section.endsAt = nil
     section.blizzardSeasonID = nil
     section.dataVersion = nil
-    Util.WipeArray(section.dungeonByChallengeModeID)
     section.available = false
 
     local API = _G.QFXMythicRankData
     local region = ns.GetSelectedRegion()
-    if type(API) == "table" and region then
-        local rawSeason = type(API.GetSeasonInfo) == "function"
-            and SafeTable(API:GetSeasonInfo(region)) or nil
+    if type(API) == "table" and type(API.GetSeasonInfo) == "function" then
+        local rawSeason = SafeTable(API:GetSeasonInfo(region))
         local metadata = type(API.GetMetadata) == "function"
             and SafeTable(API:GetMetadata(region)) or nil
         if rawSeason then
@@ -432,19 +432,6 @@ function Data.RefreshSeasonInfo()
         end
         section.state = metadata and SafeString(metadata.seasonState) or nil
         section.dataVersion = metadata and SafeString(metadata.dataVersion) or nil
-        if type(API.GetSeasonDungeons) == "function" then
-            local dungeons = SafeTable(API:GetSeasonDungeons(region))
-            for _, rawDungeon in ipairs(dungeons or {}) do
-                local dungeon = SafeTable(rawDungeon)
-                local mapID = dungeon and SafeNumber(dungeon.challengeModeID) or nil
-                if mapID then
-                    section.dungeonByChallengeModeID[mapID] = {
-                        name = SafeString(dungeon.name),
-                        shortName = SafeString(dungeon.shortName),
-                    }
-                end
-            end
-        end
         section.available = section.shortName ~= nil
             or section.name ~= nil
             or section.startsAt ~= nil
@@ -452,18 +439,6 @@ function Data.RefreshSeasonInfo()
     section.valid = true
     dirty.seasonInfo = false
     return section
-end
-
-function Data.GetEnglishDungeonInfo(mapID)
-    local safeMapID = SafeNumber(mapID)
-    local info = safeMapID and cache.seasonInfo.dungeonByChallengeModeID[safeMapID] or nil
-    if not info then
-        if ns.GetFallbackEnglishDungeonInfo then
-            return ns.GetFallbackEnglishDungeonInfo(safeMapID)
-        end
-        return nil, nil
-    end
-    return SafeString(info.name), SafeString(info.shortName)
 end
 
 local function ParseDataVersionTimestamp(dataVersion)
@@ -588,7 +563,6 @@ function Data.RefreshCutoffHistory()
     if type(API) == "table"
         and type(API.GetCutoff) == "function"
         and type(API.GetCutoffHistory) == "function"
-        and region
     then
         local metadata = type(API.GetMetadata) == "function" and SafeTable(API:GetMetadata(region)) or nil
         for _, definition in ipairs(RankTarget.CUTOFF_DEFS) do
@@ -770,4 +744,3 @@ function Data.RequestData()
         C_MythicPlus.RequestMapInfo()
     end
 end
-

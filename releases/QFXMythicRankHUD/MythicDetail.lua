@@ -11,6 +11,7 @@ local detailEventsRegistered = false
 local eventFrame
 local RegisterDetailEvents
 local RefreshCutoffTrendUI
+local CLIENT_LOCALE = GetLocale()
 
 local FRAME_WIDTH = 1100
 local FRAME_HEIGHT = 680
@@ -29,20 +30,12 @@ local MUTED_R, MUTED_G, MUTED_B = 0.65, 0.65, 0.65
 local CYAN_R, CYAN_G, CYAN_B = 0.25, 0.85, 1.0
 local DAY_MS = 86400000
 
-local TREND_SHORT_LABELS = {
-    p999 = "0.1%",
-    p990 = "1%",
-    p900 = "10%",
-    p750 = "25%",
-    p600 = "40%",
-}
-
-local TREND_FULL_LABELS = {
-    p999 = "Top 0.1%",
-    p990 = "Top 1%",
-    p900 = "Top 10%",
-    p750 = "Top 25%",
-    p600 = "Top 40%",
+local CUTOFF_LABEL_KEYS = {
+    p999 = "DETAIL_CUTOFF_01",
+    p990 = "DETAIL_CUTOFF_1",
+    p900 = "DETAIL_CUTOFF_10",
+    p750 = "DETAIL_CUTOFF_25",
+    p600 = "DETAIL_CUTOFF_40",
 }
 
 local COLUMNS = {
@@ -85,10 +78,14 @@ local function FormatCompactRank(value)
     if type(value) ~= "number" then
         return "-"
     end
-    if value >= 1000000 then
+    if CLIENT_LOCALE == "zhCN" or CLIENT_LOCALE == "zhTW" then
+        if value >= 10000 then
+            return string.format("%.1f万", value / 10000)
+        end
+    elseif value >= 1000000 then
         return string.format("%.2fM", value / 1000000)
     elseif value >= 1000 then
-        return FormatInteger(value)
+        return string.format("%.1fK", value / 1000)
     end
     return FormatInteger(value)
 end
@@ -97,12 +94,16 @@ local function FormatResourceQuantity(value)
     if type(value) ~= "number" then
         return "-"
     end
-    if value >= 1000000 then
-        return string.format("%.2fM", value / 1000000)
-    elseif value >= 1000 then
-        local digits = tostring(math.floor(value + 0.5))
-        local grouped = digits:reverse():gsub("(%d%d%d)", "%1."):reverse()
-        return (grouped:gsub("^%.", ""))
+    if CLIENT_LOCALE == "zhCN" and value >= 10000 then
+        return string.format("%.1f万", value / 10000)
+    elseif CLIENT_LOCALE == "zhTW" and value >= 10000 then
+        return string.format("%.1f萬", value / 10000)
+    elseif CLIENT_LOCALE ~= "zhCN" and CLIENT_LOCALE ~= "zhTW" then
+        if value >= 1000000 then
+            return string.format("%.2fM", value / 1000000)
+        elseif value >= 1000 then
+            return string.format("%.1fK", value / 1000)
+        end
     end
     return FormatInteger(value)
 end
@@ -338,8 +339,10 @@ local function CreateStatRow(parent, index, isSummary)
     if not isSummary then
         row:SetScript("OnEnter", function(self)
             SetRowBackground(self, detailFrame and detailFrame.detailBackgroundAlpha or 0.90, true)
-            local truncated = type(self.name.IsTruncated) == "function" and self.name:IsTruncated()
-            if self.fullDungeonName and (self.usesShortDungeonName or truncated) then
+            if self.fullDungeonName
+                and type(self.name.IsTruncated) == "function"
+                and self.name:IsTruncated()
+            then
                 GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
                 GameTooltip:SetText(self.fullDungeonName, 1, 1, 1)
                 GameTooltip:Show()
@@ -477,21 +480,8 @@ local function RefreshDungeonTable()
         else
             row.icon:Hide()
         end
-        local englishName, englishShortName = Data.GetEnglishDungeonInfo(mapInfo.mapID)
-        row.fullDungeonName = englishName or mapInfo.name or ("Dungeon " .. tostring(mapInfo.mapID))
-        row.usesShortDungeonName = false
+        row.fullDungeonName = mapInfo.name or "-"
         row.name:SetText(row.fullDungeonName)
-        local textWidth
-        if type(row.name.GetUnboundedStringWidth) == "function" then
-            textWidth = row.name:GetUnboundedStringWidth()
-        end
-        if not textWidth and type(row.name.GetStringWidth) == "function" then
-            textWidth = row.name:GetStringWidth()
-        end
-        if englishShortName and textWidth and textWidth > row.name:GetWidth() then
-            row.name:SetText(englishShortName)
-            row.usesShortDungeonName = true
-        end
         local level = scoreInfo and scoreInfo.level or nil
         local dungeonScore = scoreInfo and scoreInfo.dungeonScore or nil
         row.level:SetText(level ~= nil and string.format(L.DETAIL_LEVEL_VALUE, FormatInteger(level)) or "-")
@@ -610,13 +600,8 @@ local function RefreshKeystoneUI()
     local section = Data.GetCachedSection("keystone")
     local keystone = section and section.data or nil
     local value = detailFrame.sideUI.keyValue
-    if keystone and keystone.level then
-        local englishName, englishShortName = Data.GetEnglishDungeonInfo(keystone.mapID)
-        local displayName = englishName or englishShortName or keystone.name
-            or (keystone.mapID and ("Dungeon " .. tostring(keystone.mapID)) or nil)
-        value:SetText(displayName
-            and string.format(L.DETAIL_KEY_VALUE, displayName, FormatInteger(keystone.level))
-            or "-")
+    if keystone and keystone.name and keystone.level then
+        value:SetText(string.format(L.DETAIL_KEY_VALUE, keystone.name, FormatInteger(keystone.level)))
         SetValueColor(value, "gold")
     elseif keystone then
         value:SetText("-")
@@ -761,7 +746,7 @@ local function ShowTrendTooltip(hitFrame)
         return
     end
     GameTooltip:SetOwner(hitFrame, "ANCHOR_RIGHT")
-    local label = TREND_FULL_LABELS[series.key] or series.percent or "-"
+    local label = L[CUTOFF_LABEL_KEYS[series.key]] or series.percent or "-"
     GameTooltip:SetText(string.format(L.DETAIL_TREND_CUTOFF_TOOLTIP, label), GOLD_R, GOLD_G, GOLD_B)
     GameTooltip:AddLine(string.format(L.DETAIL_TREND_DATE, FormatTrendDate(point.timestampMs, true)), 1, 1, 1)
     GameTooltip:AddLine(string.format(L.DETAIL_TREND_SCORE, FormatScore(point.score, 1)), 1, 1, 1)
@@ -992,9 +977,6 @@ local function RefreshDetailHeader()
     detailFrame.rankLine.label:SetText(regionLabel
         and string.format(L.DETAIL_ESTIMATED_REGION_RANK, regionLabel)
         or L.SETTINGS_ROW_REGION_RANK)
-    detailFrame.sideUI.trendTitle:SetText(regionLabel
-        and string.format(L.DETAIL_CUTOFF_TRENDS_FORMAT, regionLabel)
-        or L.DETAIL_CUTOFF_TRENDS)
     if ns.RefreshRegionSelector then
         ns.RefreshRegionSelector()
     end
@@ -1108,7 +1090,7 @@ local function RefreshDirtyDetailSections()
     if refreshWeekly then
         RefreshWeeklyStatisticsUI()
     end
-    if refreshKeystone or refreshSeasonInfo then
+    if refreshKeystone then
         RefreshKeystoneUI()
     end
     local cachedVault = Data.GetCachedSection and Data.GetCachedSection("vault")
@@ -1139,122 +1121,6 @@ local function QueueDetailRefresh(delay)
     else
         RunQueuedRefresh()
     end
-end
-
-local function SetRegionSelectorEnabled(button, enabled)
-    if not button then
-        return
-    end
-    if enabled and type(button.Enable) == "function" then
-        button:Enable()
-    elseif not enabled and type(button.Disable) == "function" then
-        button:Disable()
-    elseif type(button.SetEnabled) == "function" then
-        button:SetEnabled(enabled)
-    end
-end
-
-local function SelectRegion(region)
-    if not ns.SetSelectedRegion(region) then
-        return
-    end
-    if Data and Data.MarkRegionDirty then
-        Data.MarkRegionDirty()
-    end
-    if ns.RefreshRegionSelector then
-        ns.RefreshRegionSelector()
-    end
-    if ns.RefreshHUDData then
-        ns.RefreshHUDData()
-    end
-    if ns.RefreshMeetingStoneIntegration then
-        ns.RefreshMeetingStoneIntegration("profile")
-    end
-    if detailFrame and detailFrame:IsShown() then
-        QueueDetailRefresh(0)
-    end
-end
-
-local function BuildRegionMenu(rootDescription)
-    for _, region in ipairs(ns.GetLoadedRegions()) do
-        local selectedRegion = region
-        rootDescription:CreateRadio(ns.GetRegionLabel(selectedRegion), function()
-            return ns.GetSelectedRegion() == selectedRegion
-        end, function()
-            SelectRegion(selectedRegion)
-        end)
-    end
-end
-
-local function CreateRegionSelector(parent)
-    local selector = CreateFrame("Frame", nil, parent)
-    selector:SetSize(300, 24)
-    selector.label = selector:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    selector.label:SetPoint("LEFT", selector, "LEFT", 0, 0)
-    selector.label:SetWidth(88)
-    selector.label:SetJustifyH("LEFT")
-    selector.label:SetText(L.REGION_SELECTOR_LABEL)
-
-    local dropdown
-    if type(MenuUtil) == "table" then
-        local ok, native = pcall(CreateFrame, "DropdownButton", nil, selector, "WowStyle1DropdownTemplate")
-        if ok and native and type(native.SetupMenu) == "function" then
-            dropdown = native
-            dropdown:SetSize(130, 22)
-            dropdown:SetupMenu(function(_, rootDescription)
-                BuildRegionMenu(rootDescription)
-            end)
-        end
-    end
-    if not dropdown then
-        dropdown = CreateFrame("Button", nil, selector, "UIPanelButtonTemplate")
-        dropdown:SetSize(130, 22)
-        dropdown:SetScript("OnClick", function(self)
-            local loaded = ns.GetLoadedRegions()
-            if #loaded <= 1 then
-                return
-            end
-            if type(MenuUtil) == "table" and type(MenuUtil.CreateContextMenu) == "function" then
-                MenuUtil.CreateContextMenu(self, function(_, rootDescription)
-                    BuildRegionMenu(rootDescription)
-                end)
-            elseif type(EasyMenu) == "function" then
-                selector.fallbackMenu = selector.fallbackMenu
-                    or CreateFrame("Frame", nil, selector, "UIDropDownMenuTemplate")
-                local menu = {}
-                for _, region in ipairs(loaded) do
-                    local selectedRegion = region
-                    menu[#menu + 1] = {
-                        text = ns.GetRegionLabel(selectedRegion),
-                        checked = ns.GetSelectedRegion() == selectedRegion,
-                        isNotRadio = false,
-                        func = function()
-                            SelectRegion(selectedRegion)
-                        end,
-                    }
-                end
-                EasyMenu(menu, selector.fallbackMenu, self, 0, 0, "MENU")
-            end
-        end)
-    end
-    dropdown:SetPoint("LEFT", selector.label, "RIGHT", 8, 0)
-    selector.dropdown = dropdown
-    return selector
-end
-
-function ns.RefreshRegionSelector()
-    if not detailFrame or not detailFrame.tableUI or not detailFrame.tableUI.regionSelector then
-        return
-    end
-    local selector = detailFrame.tableUI.regionSelector
-    local loaded = ns.GetLoadedRegions()
-    local textValue = ns.GetSelectedRegionLabel() or L.REGION_NO_DATA_PACK
-    if type(selector.dropdown.SetText) == "function" then
-        selector.dropdown:SetText(textValue)
-    elseif selector.dropdown.Text then
-        selector.dropdown.Text:SetText(textValue)
-    end
-    SetRegionSelectorEnabled(selector.dropdown, #loaded > 1)
 end
 
 local function CreateModuleTitle(parent, text)
@@ -1312,7 +1178,7 @@ local function CreateTrendPeriodDropdown(parent)
         local ok, native = pcall(CreateFrame, "DropdownButton", nil, parent, "WowStyle1DropdownTemplate")
         if ok and native and type(native.SetupMenu) == "function" then
             dropdown = native
-            dropdown:SetSize(60, 20)
+            dropdown:SetSize(76, 20)
             dropdown:SetupMenu(function(_, rootDescription)
                 rootDescription:CreateRadio(L.DETAIL_TREND_7_DAYS, function()
                     return detailFrame.sideUI.trendState.periodDays == 7
@@ -1332,7 +1198,7 @@ local function CreateTrendPeriodDropdown(parent)
     end
 
     dropdown = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
-    dropdown:SetSize(60, 20)
+    dropdown:SetSize(76, 20)
     dropdown:SetScript("OnClick", function(self)
         if type(MenuUtil) == "table" and type(MenuUtil.CreateContextMenu) == "function" then
             MenuUtil.CreateContextMenu(self, function(_, rootDescription)
@@ -1376,7 +1242,7 @@ local function CreateTrendButtonBar(parent)
         button.text = button:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
         button.text:SetAllPoints()
         button.text:SetJustifyH("CENTER")
-        button.text:SetText(TREND_SHORT_LABELS[key])
+        button.text:SetText(L[CUTOFF_LABEL_KEYS[key]])
         button:SetScript("OnClick", function()
             detailFrame.sideUI.trendState.cutoffKey = key
             RefreshCutoffTrendUI()
@@ -1480,12 +1346,127 @@ local function CreateResourceCell(parent, x, y)
     return button
 end
 
+local function SetRegionSelectorEnabled(button, enabled)
+    if not button then
+        return
+    end
+    if enabled and type(button.Enable) == "function" then
+        button:Enable()
+    elseif not enabled and type(button.Disable) == "function" then
+        button:Disable()
+    elseif type(button.SetEnabled) == "function" then
+        button:SetEnabled(enabled)
+    end
+end
+
+local function SelectRegion(region)
+    if not ns.SetSelectedRegion(region) then
+        return
+    end
+    if Data and Data.MarkRegionDirty then
+        Data.MarkRegionDirty()
+    end
+    if ns.RefreshRegionSelector then
+        ns.RefreshRegionSelector()
+    end
+    if ns.RefreshHUDData then
+        ns.RefreshHUDData()
+    end
+    if ns.RefreshMeetingStoneIntegration then
+        ns.RefreshMeetingStoneIntegration("profile")
+    end
+    if detailFrame and detailFrame:IsShown() then
+        QueueDetailRefresh(0)
+    end
+end
+
+local function BuildRegionMenu(rootDescription)
+    for _, region in ipairs(ns.GetLoadedRegions()) do
+        local selectedRegion = region
+        rootDescription:CreateRadio(ns.GetRegionLabel(selectedRegion), function()
+            return ns.GetSelectedRegion() == selectedRegion
+        end, function()
+            SelectRegion(selectedRegion)
+        end)
+    end
+end
+
+local function CreateRegionSelector(parent)
+    local selector = CreateFrame("Frame", nil, parent)
+    selector:SetSize(300, 24)
+    selector.label = selector:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    selector.label:SetPoint("LEFT", selector, "LEFT", 0, 0)
+    selector.label:SetWidth(88)
+    selector.label:SetJustifyH("LEFT")
+    selector.label:SetText(L.REGION_SELECTOR_LABEL)
+
+    local dropdown
+    if type(MenuUtil) == "table" then
+        local ok, native = pcall(CreateFrame, "DropdownButton", nil, selector, "WowStyle1DropdownTemplate")
+        if ok and native and type(native.SetupMenu) == "function" then
+            dropdown = native
+            dropdown:SetSize(130, 22)
+            dropdown:SetupMenu(function(_, rootDescription)
+                BuildRegionMenu(rootDescription)
+            end)
+        end
+    end
+    if not dropdown then
+        dropdown = CreateFrame("Button", nil, selector, "UIPanelButtonTemplate")
+        dropdown:SetSize(130, 22)
+        dropdown:SetScript("OnClick", function(self)
+            local loaded = ns.GetLoadedRegions()
+            if #loaded <= 1 then
+                return
+            end
+            if type(MenuUtil) == "table" and type(MenuUtil.CreateContextMenu) == "function" then
+                MenuUtil.CreateContextMenu(self, function(_, rootDescription)
+                    BuildRegionMenu(rootDescription)
+                end)
+            elseif type(EasyMenu) == "function" then
+                selector.fallbackMenu = selector.fallbackMenu
+                    or CreateFrame("Frame", nil, selector, "UIDropDownMenuTemplate")
+                local menu = {}
+                for _, region in ipairs(loaded) do
+                    menu[#menu + 1] = {
+                        text = ns.GetRegionLabel(region),
+                        checked = ns.GetSelectedRegion() == region,
+                        isNotRadio = false,
+                        func = function()
+                            SelectRegion(region)
+                        end,
+                    }
+                end
+                EasyMenu(menu, selector.fallbackMenu, self, 0, 0, "MENU")
+            end
+        end)
+    end
+    dropdown:SetPoint("LEFT", selector.label, "RIGHT", 8, 0)
+    selector.dropdown = dropdown
+    return selector
+end
+
+function ns.RefreshRegionSelector()
+    if not detailFrame or not detailFrame.tableUI or not detailFrame.tableUI.regionSelector then
+        return
+    end
+    local selector = detailFrame.tableUI.regionSelector
+    local loaded = ns.GetLoadedRegions()
+    local textValue = ns.GetSelectedRegionLabel() or L.REGION_NO_DATA_PACK
+    if type(selector.dropdown.SetText) == "function" then
+        selector.dropdown:SetText(textValue)
+    elseif selector.dropdown.Text then
+        selector.dropdown.Text:SetText(textValue)
+    end
+    SetRegionSelectorEnabled(selector.dropdown, #loaded > 1)
+end
+
 local function CreateDetailFrame()
     if detailFrame then
         return detailFrame
     end
 
-    local frame = CreateFrame("Frame", "QFXMythicRankHUDGlobalDetailFrame", UIParent, "BackdropTemplate")
+    local frame = CreateFrame("Frame", "QFXMythicRankHUDDetailFrame", UIParent, "BackdropTemplate")
     detailFrame = frame
     frame:SetSize(FRAME_WIDTH, FRAME_HEIGHT)
     frame:SetFrameStrata("HIGH")
@@ -1605,6 +1586,7 @@ local function CreateDetailFrame()
     frame.tablePanel:SetPoint("TOPLEFT", frame, "TOPLEFT", FRAME_SIDE_PADDING, -240)
     frame.tablePanel:SetSize(TABLE_WIDTH, BODY_HEIGHT)
     frame.tableUI = { rows = {} }
+    frame.tableUI.regionSelector = CreateRegionSelector(frame.tablePanel)
     AddBackgroundLayer(frame, frame.tablePanel, 0.035)
 
     local headerBackground = frame.tablePanel:CreateTexture(nil, "BACKGROUND")
@@ -1634,7 +1616,6 @@ local function CreateDetailFrame()
     frame.tableUI.empty:SetText(L.DETAIL_MAPS_UNAVAILABLE)
     frame.tableUI.empty:SetTextColor(MUTED_R, MUTED_G, MUTED_B)
     frame.tableUI.summary = CreateStatRow(frame.tablePanel, 0, true)
-    frame.tableUI.regionSelector = CreateRegionSelector(frame.tablePanel)
 
     frame.sidePanel = CreateFrame("Frame", nil, frame)
     frame.sidePanel:SetPoint(
@@ -1669,7 +1650,7 @@ local function CreateDetailFrame()
 
     side.trendState = { cutoffKey = "p999", periodDays = 7 }
     side.trendTitle = CreateModuleTitle(frame.sidePanel, L.DETAIL_CUTOFF_TRENDS)
-    side.trendTitle:SetWidth(SIDE_WIDTH - 68)
+    side.trendTitle:SetWidth(SIDE_WIDTH - 84)
     side.trendPeriodDropdown = CreateTrendPeriodDropdown(frame.sidePanel)
     side.trendButtonBar, side.trendButtons = CreateTrendButtonBar(frame.sidePanel)
     side.trendSummary = CreateFrame("Frame", nil, frame.sidePanel)
@@ -1702,13 +1683,13 @@ local function CreateDetailFrame()
     if type(UISpecialFrames) == "table" then
         local found = false
         for _, frameName in ipairs(UISpecialFrames) do
-            if frameName == "QFXMythicRankHUDGlobalDetailFrame" then
+            if frameName == "QFXMythicRankHUDDetailFrame" then
                 found = true
                 break
             end
         end
         if not found then
-            table.insert(UISpecialFrames, "QFXMythicRankHUDGlobalDetailFrame")
+            table.insert(UISpecialFrames, "QFXMythicRankHUDDetailFrame")
         end
     end
 

@@ -19,8 +19,8 @@ local DEFAULT_ROW_VISIBILITY = {
 
 local DEFAULTS = {
     showHUD = true,
-    announceTeleport = true,
     enableMythicDetail = true,
+    announceTeleport = true,
     borderStyle = "gold",
     borderAlpha = 0.85,
     backgroundAlpha = 0.88,
@@ -68,7 +68,7 @@ end
 local hudSnapshot = {}
 local db
 local databaseInitialized = false
-local englishTextWarningPrinted = false
+local CLIENT_LOCALE = GetLocale()
 local GOLD_R, GOLD_G, GOLD_B = 1.0, 0.82, 0.0
 
 local function CopyDefaults(target, defaults)
@@ -90,7 +90,7 @@ local function InitializeDatabase()
         return db
     end
 
-    local oldDB = type(QFXMythicRankHUDGlobalDB) == "table" and QFXMythicRankHUDGlobalDB or nil
+    local oldDB = type(QFXMythicRankHUDDB) == "table" and QFXMythicRankHUDDB or nil
     local hadShowRows = oldDB and type(oldDB.showRows) == "table"
     local oldShowRanges = oldDB and oldDB.showRanges
     local hadDetailBorderAlpha = oldDB and oldDB.detailBorderAlpha ~= nil
@@ -98,24 +98,24 @@ local function InitializeDatabase()
     local legacyBorderAlpha = oldDB and oldDB.borderAlpha or nil
     local legacyBackgroundAlpha = oldDB and oldDB.backgroundAlpha or nil
 
-    QFXMythicRankHUDGlobalDB = CopyDefaults(oldDB, DEFAULTS)
+    QFXMythicRankHUDDB = CopyDefaults(oldDB, DEFAULTS)
 
     if not hadShowRows and oldShowRanges == true then
-        QFXMythicRankHUDGlobalDB.showRows.rankRange = true
-        QFXMythicRankHUDGlobalDB.showRows.percentileRange = true
+        QFXMythicRankHUDDB.showRows.rankRange = true
+        QFXMythicRankHUDDB.showRows.percentileRange = true
     end
 
-    db = QFXMythicRankHUDGlobalDB
+    db = QFXMythicRankHUDDB
     db.showRanges = nil
 
     if type(db.showHUD) ~= "boolean" then
         db.showHUD = DEFAULTS.showHUD
     end
-    if type(db.announceTeleport) ~= "boolean" then
-        db.announceTeleport = DEFAULTS.announceTeleport
-    end
     if type(db.enableMythicDetail) ~= "boolean" then
         db.enableMythicDetail = DEFAULTS.enableMythicDetail
+    end
+    if type(db.announceTeleport) ~= "boolean" then
+        db.announceTeleport = DEFAULTS.announceTeleport
     end
     db.borderAlpha = Util.ClampNumber(db.borderAlpha, 0, 1, DEFAULTS.borderAlpha)
     db.backgroundAlpha = Util.ClampNumber(db.backgroundAlpha, 0, 1, DEFAULTS.backgroundAlpha)
@@ -222,10 +222,16 @@ local function FormatCompactRank(value)
     if type(value) ~= "number" then
         return "--"
     end
+    if CLIENT_LOCALE == "zhCN" or CLIENT_LOCALE == "zhTW" then
+        if value >= 10000 then
+            return string.format("%.1f万", value / 10000)
+        end
+        return FormatInteger(value)
+    end
     if value >= 1000000 then
         return string.format("%.2fM", value / 1000000)
     elseif value >= 1000 then
-        return FormatInteger(value)
+        return string.format("%.1fK", value / 1000)
     end
     return FormatInteger(value)
 end
@@ -365,15 +371,18 @@ local function GetHUDAchievementTargets(API, region)
         return nil
     end
     local definitions = {
-        { key = "keystoneExplorer", name = L.ACHIEVEMENT_KEYSTONE_EXPLORER_SHORT },
-        { key = "keystoneConqueror", name = L.ACHIEVEMENT_KEYSTONE_CONQUEROR_SHORT },
-        { key = "keystoneMaster", name = L.ACHIEVEMENT_KEYSTONE_MASTER_SHORT },
-        { key = "keystoneHero", name = L.ACHIEVEMENT_KEYSTONE_HERO_SHORT },
-        { key = "keystoneLegend", name = L.ACHIEVEMENT_KEYSTONE_LEGEND_SHORT },
+        { key = "keystoneExplorer", name = L.ACHIEVEMENT_KEYSTONE_EXPLORER },
+        { key = "keystoneConqueror", name = L.ACHIEVEMENT_KEYSTONE_CONQUEROR },
+        { key = "keystoneMaster", name = L.ACHIEVEMENT_KEYSTONE_MASTER },
+        { key = "keystoneHero", name = L.ACHIEVEMENT_KEYSTONE_HERO },
+        { key = "keystoneLegend", name = L.ACHIEVEMENT_KEYSTONE_LEGEND },
     }
     local targets = {}
     for _, definition in ipairs(definitions) do
         local ok, raw = pcall(API.GetAchievementCutoff, API, region, definition.key)
+        if not ok or raw == nil then
+            ok, raw = pcall(API.GetAchievementCutoff, API, definition.key)
+        end
         local value = Util.SafeTable(raw)
         local threshold = Util.SafeNumber(value and (value.thresholdScore or value.score) or raw)
         if threshold then
@@ -511,7 +520,7 @@ local function RefreshHUDData()
     if currentTop01 and topRankMax then
         SetRow(rows.rank, rankLabel, string.format(L.TOP_RANK_VALUE, FormatInteger(topRankMax)), 1, 0.82, 0)
     elseif estimatedRank then
-        SetRow(rows.rank, rankLabel, string.format(L.APPROX_RANK, FormatCompactRank(estimatedRank)), 1, 0.82, 0)
+        SetRow(rows.rank, rankLabel, string.format(L.APPROX_RANK, FormatInteger(estimatedRank)), 1, 0.82, 0)
     elseif rankMin and rankMax then
         local range = string.format(L.RANGE_JOIN, FormatCompactRank(rankMin), FormatCompactRank(rankMax))
         SetRow(rows.rank, rankLabel, string.format(L.APPROX_RANK, range), 1, 0.82, 0)
@@ -552,12 +561,10 @@ local function RefreshHUDData()
         SetRow(rows.todayRank, L.TODAY_RANK, L.TODAY_LEFT_TOP_01, 1, 0.45, 0.45)
     elseif estimatedRank and baselineEstimatedRank then
         local movement = baselineEstimatedRank - estimatedRank
-        if movement > 0 then
-            SetRow(rows.todayRank, L.TODAY_RANK, string.format(L.TODAY_FORWARD_VALUE, FormatCompactRank(movement)), 0.6, 0.85, 0.6)
-        elseif movement < 0 then
-            SetRow(rows.todayRank, L.TODAY_RANK, string.format(L.TODAY_BACK_VALUE, FormatCompactRank(math.abs(movement))), 1, 0.45, 0.45)
+        if movement >= 0 then
+            SetRow(rows.todayRank, L.TODAY_RANK, string.format(L.TODAY_FORWARD_VALUE, FormatInteger(movement)), 0.6, 0.85, 0.6)
         else
-            SetRow(rows.todayRank, L.TODAY_RANK, string.format(L.APPROX_RANK, FormatCompactRank(0)), 0.82, 0.82, 0.82)
+            SetRow(rows.todayRank, L.TODAY_RANK, string.format(L.TODAY_BACK_VALUE, FormatInteger(math.abs(movement))), 1, 0.45, 0.45)
         end
     else
         SetRow(rows.todayRank, L.TODAY_RANK, "--", 0.65, 0.65, 0.65)
@@ -676,16 +683,16 @@ function ns.SetHUDShown(enabled)
     end
 end
 
+function ns.SetDetailEnabled(value)
+    GetDB().enableMythicDetail = value == true
+end
+
 function ns.IsTeleportAnnouncementEnabled()
     return GetDB().announceTeleport ~= false
 end
 
 function ns.SetTeleportAnnouncementEnabled(enabled)
     GetDB().announceTeleport = enabled == true
-end
-
-function ns.SetDetailEnabled(value)
-    GetDB().enableMythicDetail = value == true
 end
 
 function ns.SetHUDBorderAlpha(value)
@@ -758,14 +765,6 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
         self:UnregisterEvent("ADDON_LOADED")
         InitializeDatabase()
         ns.ResolveSelectedRegion()
-        if not englishTextWarningPrinted
-            and (L.SCORE ~= "M+ Score"
-                or L.DETAIL_COLUMN_NAME ~= "Dungeon"
-                or L.VAULT_RAID ~= "Raid")
-        then
-            englishTextWarningPrinted = true
-            print(L.ADDON_TITLE .. ": English UI text was overwritten by another addon or an outdated build.")
-        end
         if ns.InitializeSettings then
             ns.InitializeSettings()
         end

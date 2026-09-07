@@ -1,10 +1,10 @@
-local ADDON_NAME, ns = ...
+local _, ns = ...
 local L = ns.L
 
 local categoryID
 local showHUDCheck
-local announceTeleportCheck
 local detailCheck
+local announceTeleportCheck
 local borderAlphaSlider
 local backgroundAlphaSlider
 local detailBorderAlphaSlider
@@ -15,44 +15,6 @@ local refreshingControls = false
 local pendingHUDStyle = false
 local pendingDetailStyle = false
 local controlsCreated = false
-
-local function PrintAddonMessage(message)
-    print("|cffffd100" .. L.ADDON_TITLE .. ":|r " .. message)
-end
-
-local function GetAddOnVersion()
-    local getter = C_AddOns and C_AddOns.GetAddOnMetadata or GetAddOnMetadata
-    if type(getter) ~= "function" then
-        return "Unknown"
-    end
-    local ok, version = pcall(getter, ADDON_NAME, "Version")
-    return ok and version or "Unknown"
-end
-
-local function PrintDebugInfo()
-    print(L.ADDON_TITLE)
-    print("Addon name: " .. tostring(ADDON_NAME))
-    print("TOC version: " .. tostring(GetAddOnVersion()))
-    print("Client locale: " .. tostring(type(GetLocale) == "function" and GetLocale() or "Unknown"))
-    print("Selected region: " .. tostring(ns.GetSelectedRegionLabel() or "None"))
-    print("Score label: " .. tostring(L.SCORE))
-    print("Dungeon label: " .. tostring(L.DETAIL_COLUMN_NAME))
-    print("Runs label: " .. tostring(L.DETAIL_COLUMN_TOTAL))
-    print("Raid label: " .. tostring(L.VAULT_RAID))
-    print("Trend label: " .. tostring(L.DETAIL_CUTOFF_1))
-    local integration = ns.MeetingStoneIntegration
-    if type(integration) == "table" then
-        local host = integration.mainPanel
-        local hostShown = type(host) == "table" and host.IsShown and host:IsShown()
-        local db = ns.GetDB and ns.GetDB() or {}
-        print("Group board host: " .. tostring(integration.hostKey or "None"))
-        print("Host frame found: " .. tostring(host ~= nil) .. ", shown: " .. tostring(hostShown == true))
-        print("HUD enabled: " .. tostring(not db or db.showHUD ~= false))
-        print("PremadeGroupBoardFrame exists: " .. tostring(_G.PremadeGroupBoardFrame ~= nil))
-        print("Attach attempts: " .. tostring(integration.attachAttempts or 0)
-            .. ", watcher scheduled: " .. tostring(integration.attachCheckScheduled == true))
-    end
-end
 
 local function QueueHUDStyleApply()
     if pendingHUDStyle then
@@ -173,11 +135,11 @@ local function RefreshControls()
     if showHUDCheck then
         SetChecked(showHUDCheck, db.showHUD)
     end
-    if announceTeleportCheck then
-        SetChecked(announceTeleportCheck, db.announceTeleport ~= false)
-    end
     if detailCheck then
         SetChecked(detailCheck, db.enableMythicDetail ~= false)
+    end
+    if announceTeleportCheck then
+        SetChecked(announceTeleportCheck, db.announceTeleport ~= false)
     end
     for key, check in pairs(rowChecks) do
         SetChecked(check, db.showRows[key] ~= false)
@@ -365,12 +327,12 @@ function ns.OpenSettings()
     if categoryID and Settings and type(Settings.OpenToCategory) == "function" then
         Settings.OpenToCategory(categoryID)
     else
-        PrintAddonMessage(L.SLASH_HELP)
+        print("|cffffd100QFX:|r " .. L.SLASH_HELP)
     end
 end
 
-SLASH_QFXMYTHICRANKHUDGLOBAL1 = "/myrank"
-SlashCmdList.QFXMYTHICRANKHUDGLOBAL = function(message)
+SLASH_QFXMYTHICRANKHUD1 = "/qfxrank"
+SlashCmdList.QFXMYTHICRANKHUD = function(message)
     local command = strtrim((message or "")):lower()
     local db = ns.GetDB()
 
@@ -382,12 +344,10 @@ SlashCmdList.QFXMYTHICRANKHUDGLOBAL = function(message)
         local enabled = not (db.showRows.rankRange and db.showRows.percentileRange)
         ns.SetRowVisible("rankRange", enabled)
         ns.SetRowVisible("percentileRange", enabled)
-    elseif command == "debug" then
-        PrintDebugInfo()
     elseif command == "" then
         ns.OpenSettings()
     else
-        PrintAddonMessage(L.SLASH_HELP)
+        print("|cffffd100QFX:|r " .. L.SLASH_HELP)
     end
 end
 
