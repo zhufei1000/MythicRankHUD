@@ -5,21 +5,19 @@ local Util = ns.Util
 -- Post-run summary: after a Mythic+ run completes, compare the player's
 -- overall score before/after the run and announce the score gain plus the
 -- estimated rank improvement (this run only, not the daily delta) in party.
+-- Dungeon entry welcome: when the party loads into a dungeon, wait until
+-- every member's Mythic+ score is readable, then announce one line per
+-- teammate followed by a closing greeting - while the group is still
+-- settling in, never once the run itself has started.
+--
+-- All announcement texts are {name}-style templates (editable in settings);
+-- scores/ranks are inserted as plain numbers, so templates decide whether a
+-- value reads "<3456>" or "<~12345>".
 
 local run = {
     active = false,
     scoreBefore = nil,
 }
-
-local function GetNow()
-    if type(GetTime) == "function" then
-        local ok, value = pcall(GetTime)
-        if ok and type(value) == "number" then
-            return value
-        end
-    end
-    return 0
-end
 
 local function ReadPlayerScore()
     local API = _G.QFXMythicRankData
@@ -70,8 +68,42 @@ local function FormatRankValue(value)
     return tostring(math.floor(value + 0.5))
 end
 
--- Data pack dataVersion strings are UTC ("YYYYMMDDHHMM"); the run summary
--- converts them to each region's local wall clock. Fixed offsets, no DST.
+-- Signed score difference for the "{scoreGain}" placeholder.
+local function FormatSignedScoreValue(value)
+    if type(value) ~= "number" then
+        return "?"
+    end
+    if value > 0 then
+        return "+" .. FormatScoreValue(value)
+    end
+    return FormatScoreValue(value)
+end
+
+-- The previous encounter time as "M-D HH:MM" (e.g. 9-13 23:33).
+local function FormatMeetTime(timestamp)
+    if type(timestamp) ~= "number" or timestamp <= 0 then
+        return nil
+    end
+    local dateFn = type(date) == "function" and date or (type(os) == "table" and os.date) or nil
+    if not dateFn then
+        return nil
+    end
+    local ok, parts = pcall(dateFn, "*t", timestamp)
+    if not ok or type(parts) ~= "table" then
+        return nil
+    end
+    local month = tonumber(parts.month)
+    local day = tonumber(parts.day)
+    local hour = tonumber(parts.hour)
+    local minute = tonumber(parts.min)
+    if not month or not day or not hour or not minute then
+        return nil
+    end
+    return string.format("%d-%d %02d:%02d", month, day, hour, minute)
+end
+
+-- Data pack dataVersion strings are UTC ("YYYYMMDDHHMM"); announcements show
+-- them as each region's local wall clock. Fixed offsets, no DST.
 local REGION_UTC_OFFSETS = {
     cn = 8,
     tw = 8,
@@ -80,7 +112,8 @@ local REGION_UTC_OFFSETS = {
     us = -5,
 }
 
-local function FormatDataVersionLocal(version, region)
+-- Returns region-local month, day, hour, minute for a dataVersion string.
+local function GetDataVersionParts(version, region)
     local text = tostring(version or "")
     local y, m, d, hh, mm = text:match("^(%d%d%d%d)(%d%d)(%d%d)(%d%d)(%d%d)$")
     if not y then
@@ -120,10 +153,20 @@ local function FormatDataVersionLocal(version, region)
     if mm2 <= 2 then
         yr = yr + 1
     end
-    return string.format("%02d-%02d %02d:%02d", mm2, dd2, localHour, localMin)
+    return mm2, dd2, localHour, localMin
 end
 
-local function GetUpdateTimeText(region)
+local function FormatDataVersionLocal(version, region)
+    local month, day, hour, minute = GetDataVersionParts(version, region)
+    if not month then
+        return nil
+    end
+    return string.format("%02d-%02d %02d:%02d", month, day, hour, minute)
+end
+
+-- Reads the data pack's update date and returns the region-local
+-- month/day/hour/minute parts used by the announcement templates.
+local function GetLocalDataTime(region)
     local API = _G.QFXMythicRankData
     if type(API) ~= "table" or type(API.GetMetadata) ~= "function" then
         return nil
@@ -134,7 +177,20 @@ local function GetUpdateTimeText(region)
     if type(version) ~= "string" and type(version) ~= "number" then
         return nil
     end
-    return FormatDataVersionLocal(version, region)
+    return GetDataVersionParts(version, region)
+end
+
+-- Data pack update date without year or time ("9-11" style).
+local function GetPackDateText(region)
+    local month, day = GetLocalDataTime(region)
+    if not month then
+        return nil
+    end
+    local separator = type(L) == "table" and L.PACK_DATE_SEPARATOR or "-"
+    if type(separator) ~= "string" or separator == "" then
+        separator = "-"
+    end
+    return tostring(month) .. separator .. tostring(day)
 end
 
 local function GetRegionLabel()
@@ -167,23 +223,81 @@ local function GetRunAnnounceDelay()
     return math.max(0, math.min(60, delay))
 end
 
-local function AppendUpdateTime(region, message, suffixKey)
-    local updateTime = GetUpdateTimeText(region)
-    if not updateTime then
-        return message
+-- Resolves an announcement template: a non-empty settings override wins,
+-- otherwise the locale default. Empty overrides restore the default.
+local function GetAnnounceTemplate(key)
+    if type(ns.GetAnnounceTemplate) == "function" then
+        local override = ns.GetAnnounceTemplate(key)
+        if type(override) == "string" and override ~= "" then
+            return override
+        end
     end
-    local suffixFormat = L[suffixKey or "RUN_GAIN_UPDATE_TIME_FORMAT"]
-    if type(suffixFormat) ~= "string" or suffixFormat == "" then
-        return message
+    local default = type(L) == "table" and L[key] or nil
+    if type(default) == "string" and default ~= "" then
+        return default
     end
-    local ok, suffix = pcall(string.format, suffixFormat, updateTime)
-    if ok and type(suffix) == "string" then
-        return message .. suffix
-    end
-    return message
+    return nil
 end
 
-local function BuildRunGainMessage(region, regionLabel, rankAfter, scoreGain, rankGain, scoreAfter)
+-- Expands {placeholder} keys; unknown or missing values keep the literal
+-- {key} so broken templates stay visible instead of sending broken text.
+local function ExpandTemplate(template, values)
+    if type(template) ~= "string" or template == "" then
+        return nil
+    end
+    local expanded = template:gsub("{(%w+)}", function(key)
+        local value = values and values[key]
+        if value == nil then
+            return nil
+        end
+        return tostring(value)
+    end)
+    if type(expanded) ~= "string" or expanded == "" then
+        return nil
+    end
+    return expanded
+end
+
+-- The pack's update date and time, both region-local. The footer line shows
+-- the date on its own, so the full time stamp is only exposed as a
+-- placeholder for templates that ask for it.
+local function GetUpdateTimeText(region)
+    local month, day, hour, minute = GetLocalDataTime(region)
+    if not month then
+        return nil
+    end
+    return string.format("%02d-%02d %02d:%02d", month, day, hour, minute)
+end
+
+-- Announcement lines are sent this far apart: a burst of separate sentences
+-- would otherwise hit the client's chat rate limit.
+local ANNOUNCE_LINE_INTERVAL = 1
+
+-- Queues one chat message at `delay` seconds from now. Queued lines are
+-- dropped once the run has started, so a key inserted mid-burst never gets
+-- interrupted by ads.
+local function QueueChatMessage(message, delay)
+    if delay > 0 and C_Timer and type(C_Timer.After) == "function" then
+        C_Timer.After(delay, function()
+            if run.active then
+                return
+            end
+            if type(SendChatMessage) == "function" then
+                pcall(SendChatMessage, message, "PARTY")
+            end
+        end)
+    elseif type(SendChatMessage) == "function" and not run.active then
+        pcall(SendChatMessage, message, "PARTY")
+    end
+end
+
+-- Builds the post-run summary as separate lines, sent one second apart:
+--   1. this run's gain (or the no-gain wording)
+--   2. today's gain          (only when the daily baseline is known)
+--   3. current score + rank
+--   4. the footer line carrying the data pack date and update time
+-- A run always reports at least lines 1, 3 and 4.
+local function BuildRunGainMessages(region, regionLabel, rankAfter, scoreGain, rankGain, scoreAfter)
     local baseline
     if type(ns.GetDailyBaselineScore) == "function" then
         baseline = ns.GetDailyBaselineScore()
@@ -196,70 +310,37 @@ local function BuildRunGainMessage(region, regionLabel, rankAfter, scoreGain, ra
         end
     end
 
-    -- Zero-gain runs get their own wording instead of "improved by 0".
-    if scoreGain <= 0 then
-        if baseline and todayRankGain then
-            local formatText = L.RUN_GAIN_NO_GAIN_TODAY_FORMAT
-            if type(formatText) == "string" and formatText ~= "" then
-                local okMsg, message = pcall(
-                    string.format,
-                    formatText,
-                    regionLabel,
-                    FormatRankValue(rankAfter),
-                    FormatScoreValue(math.max(0, scoreAfter - baseline)),
-                    FormatRankValue(todayRankGain)
-                )
-                if okMsg and type(message) == "string" and message ~= "" then
-                    return AppendUpdateTime(region, message)
-                end
-            end
+    local values = {
+        region = regionLabel,
+        rank = FormatRankValue(rankAfter),
+        score = FormatScoreValue(scoreGain),
+        rankGain = FormatRankValue(rankGain),
+        currentScore = FormatScoreValue(scoreAfter),
+        todayScore = FormatScoreValue(baseline and math.max(0, scoreAfter - baseline) or 0),
+        todayRank = FormatRankValue(todayRankGain or 0),
+        date = GetPackDateText(region) or "",
+        updateTime = GetUpdateTimeText(region) or "",
+    }
+
+    local messages = {}
+    local function Add(key)
+        local line = ExpandTemplate(GetAnnounceTemplate(key), values)
+        if line then
+            messages[#messages + 1] = line
         end
-        local formatText = L.RUN_GAIN_NO_GAIN_FORMAT
-        if type(formatText) ~= "string" or formatText == "" then
-            return nil
-        end
-        local okMsg, message = pcall(string.format, formatText, regionLabel, FormatRankValue(rankAfter))
-        if okMsg and type(message) == "string" and message ~= "" then
-            return AppendUpdateTime(region, message)
-        end
-        return nil
+        return line
     end
 
-    if baseline and todayRankGain then
-        local formatText = L.RUN_GAIN_ANNOUNCEMENT_TODAY_FORMAT
-        if type(formatText) == "string" and formatText ~= "" then
-            local okMsg, message = pcall(
-                string.format,
-                formatText,
-                FormatScoreValue(scoreGain),
-                FormatRankValue(rankGain),
-                regionLabel,
-                FormatRankValue(rankAfter),
-                FormatScoreValue(math.max(0, scoreAfter - baseline)),
-                FormatRankValue(todayRankGain)
-            )
-            if okMsg and type(message) == "string" and message ~= "" then
-                return AppendUpdateTime(region, message)
-            end
-        end
-        return nil
+    -- Zero-gain runs get their own wording instead of "improved by 0".
+    Add(scoreGain > 0 and "RUN_GAIN_LINE_GAIN" or "RUN_GAIN_LINE_NO_GAIN")
+    if todayRankGain then
+        Add("RUN_GAIN_LINE_TODAY")
     end
-    local formatText = L.RUN_GAIN_ANNOUNCEMENT_FORMAT
-    if type(formatText) ~= "string" or formatText == "" then
-        return nil
-    end
-    local okMsg, message = pcall(
-        string.format,
-        formatText,
-        FormatScoreValue(scoreGain),
-        FormatRankValue(rankGain),
-        regionLabel,
-        FormatRankValue(rankAfter)
-    )
-    if okMsg and type(message) == "string" and message ~= "" then
-        return AppendUpdateTime(region, message)
-    end
-    return nil
+    Add("RUN_GAIN_LINE_CURRENT")
+    -- Footer carries the pack date, so no separate update-time suffix is
+    -- appended: that would repeat the same date the footer already shows.
+    Add("RUN_GAIN_LINE_AD")
+    return messages
 end
 
 local function AnnounceRunGain(scoreBefore, scoreAfter)
@@ -286,12 +367,12 @@ local function AnnounceRunGain(scoreBefore, scoreAfter)
     end
     local scoreGain = math.max(0, scoreAfter - scoreBefore)
     local rankGain = math.max(0, math.floor(rankBefore - rankAfter + 0.5))
-    local message = BuildRunGainMessage(region, regionLabel, rankAfter, scoreGain, rankGain, scoreAfter)
-    if not message then
+    local messages = BuildRunGainMessages(region, regionLabel, rankAfter, scoreGain, rankGain, scoreAfter)
+    if #messages == 0 then
         return
     end
-    if type(SendChatMessage) == "function" then
-        pcall(SendChatMessage, message, "PARTY")
+    for index, message in ipairs(messages) do
+        QueueChatMessage(message, index * ANNOUNCE_LINE_INTERVAL)
     end
 end
 
@@ -334,20 +415,133 @@ local function SchedulePostRunCheck()
     end
 end
 
+
 -- ---------------------------------------------------------------------------
--- Member join welcome: when a new member joins the (non-raid) party while the
--- player is out of combat, try to read their Mythic+ score and announce a
--- welcome with their score and estimated regional rank in party chat.
+-- Member join welcome: when a new member joins the (non-raid) party, read
+-- their Mythic+ score and announce a welcome with their score and estimated
+-- regional rank in party chat. The first read is immediate; otherwise the
+-- module keeps polling until the score becomes readable. Polling stops when
+-- the welcome was sent (all members greeted), the member leaves, or the run
+-- starts. Encounters are persisted per player and per month: a member is only
+-- announced again once their score changed, and records expire after a month.
 -- ---------------------------------------------------------------------------
 
 local WELCOME_RETRY_INTERVAL = 2
-local WELCOME_MAX_RETRIES = 15
-local WELCOME_COOLDOWN = 600
+local ENCOUNTER_RETENTION_SECONDS = 30 * 24 * 60 * 60
+local ENCOUNTER_PRUNE_INTERVAL = 60 * 60
 
 local welcomeState = {
-    known = {},    -- [guid] = true, current party roster
-    cooldown = {}, -- [guid] = time of the last welcome announcement
+    known = {}, -- [guid] = true, current party roster
 }
+
+-- Poll chains capture the current generation and stop as soon as the run
+-- starts (the key was inserted); the counter is bumped on CHALLENGE_MODE_START.
+local pollGeneration = 0
+
+local inMemoryEncounters = {}
+
+local function GetWallClock()
+    if type(GetServerTime) == "function" then
+        local ok, value = pcall(GetServerTime)
+        if ok and type(value) == "number" and value > 0 then
+            return value
+        end
+    end
+    local timeFn = type(time) == "function" and time or (type(os) == "table" and os.time) or nil
+    if timeFn then
+        local ok, value = pcall(timeFn)
+        if ok and type(value) == "number" and value > 0 then
+            return value
+        end
+    end
+    return 0
+end
+
+local function GetMonthKey(timestamp)
+    local dateFn = type(date) == "function" and date or (type(os) == "table" and os.date) or nil
+    if not dateFn then
+        return "unknown"
+    end
+    local ok, value = pcall(dateFn, "%Y%m", timestamp)
+    if ok and type(value) == "string" then
+        return value
+    end
+    return "unknown"
+end
+
+local function GetEncounterStore()
+    -- Encounter history is per character; the account-wide table is only a
+    -- fallback for diagnostics and for standalone test harnesses.
+    if type(ns.GetCharacterDB) == "function" then
+        local characterDB = ns.GetCharacterDB()
+        if type(characterDB) == "table" then
+            if type(characterDB.encounters) ~= "table" then
+                characterDB.encounters = {}
+            end
+            return characterDB.encounters
+        end
+    end
+    if type(ns.GetDB) == "function" then
+        local db = ns.GetDB()
+        if type(db) == "table" then
+            if type(db.encounters) ~= "table" then
+                db.encounters = {}
+            end
+            return db.encounters
+        end
+    end
+    return inMemoryEncounters
+end
+
+local lastPruneAt = nil
+
+-- Drops records that have not been seen for a month. Runs at most once an hour.
+local function PruneEncounters()
+    local store = GetEncounterStore()
+    local now = GetWallClock()
+    if not store or now <= 0 then
+        return
+    end
+    if lastPruneAt and (now - lastPruneAt) < ENCOUNTER_PRUNE_INTERVAL then
+        return
+    end
+    lastPruneAt = now
+    for guid, record in pairs(store) do
+        local lastSeen = type(record) == "table" and tonumber(record.lastSeen) or nil
+        if not lastSeen or (now - lastSeen) > ENCOUNTER_RETENTION_SECONDS then
+            store[guid] = nil
+        end
+    end
+end
+
+local function RecordEncounter(guid, displayName, realm)
+    local store = GetEncounterStore()
+    if not store then
+        return nil
+    end
+    local now = GetWallClock()
+    local record = store[guid]
+    if type(record) ~= "table" then
+        record = {}
+        store[guid] = record
+    end
+    local previousScore = tonumber(record.score)
+    local previousSeen = tonumber(record.lastSeen)
+    local monthKey = GetMonthKey(now)
+    if record.monthKey ~= monthKey then
+        record.monthKey = monthKey
+        record.count = 0
+    end
+    record.count = (tonumber(record.count) or 0) + 1
+    record.lastSeen = now
+    if type(displayName) == "string" and displayName ~= "" then
+        record.name = displayName
+    end
+    if type(realm) == "string" and realm ~= "" then
+        record.realm = realm
+    end
+    return record, previousScore, previousSeen
+end
 
 local function IsCombatLocked()
     if type(InCombatLockdown) == "function" then
@@ -432,6 +626,17 @@ local function GetUnitDisplayName(unit)
     return nil
 end
 
+local function GetUnitRealm(unit)
+    if type(UnitFullName) ~= "function" then
+        return nil
+    end
+    local ok, _, realm = pcall(UnitFullName, unit)
+    if ok and type(realm) == "string" and realm ~= "" then
+        return realm
+    end
+    return nil
+end
+
 local function ReadUnitMythicPlusScore(unit)
     if C_PlayerInfo and type(C_PlayerInfo.GetPlayerMythicPlusRatingSummary) == "function" then
         local ok, summary = pcall(C_PlayerInfo.GetPlayerMythicPlusRatingSummary, unit)
@@ -442,14 +647,9 @@ local function ReadUnitMythicPlusScore(unit)
     return nil
 end
 
-local function AnnounceMemberWelcome(unit, guid)
-    local now = GetNow()
+local function AnnounceMemberWelcome(unit, guid, score, record, previousScore, previousSeen)
     local name = GetUnitDisplayName(unit)
     if not name then
-        return false
-    end
-    local score = ReadUnitMythicPlusScore(unit)
-    if not score then
         return false
     end
     local region = ns.GetSelectedRegion()
@@ -461,35 +661,71 @@ local function AnnounceMemberWelcome(unit, guid)
     if not rank then
         return false
     end
-    local formatText = L.MEMBER_WELCOME_FORMAT
-    if type(formatText) ~= "string" or formatText == "" then
+    local values = {
+        name = name,
+        score = FormatScoreValue(score),
+        region = regionLabel,
+        rank = FormatRankValue(rank),
+        meetCount = tostring(tonumber(record and record.count) or 1),
+    }
+    local message
+    if previousScore ~= nil then
+        -- Repeat meeting: compare with the score recorded last time and show
+        -- when that meeting happened.
+        local difference = score - previousScore
+        local changeText
+        if difference > 0.05 then
+            changeText = string.format(
+                L.MEMBER_SCORE_UP_TEXT or "Up %s points",
+                FormatScoreValue(difference)
+            )
+        elseif difference < -0.05 then
+            changeText = string.format(
+                L.MEMBER_SCORE_DOWN_TEXT or "Down %s points",
+                FormatScoreValue(math.abs(difference))
+            )
+        else
+            changeText = L.MEMBER_SCORE_SAME_TEXT or "Your score has not changed"
+        end
+        values.scoreGain = FormatSignedScoreValue(difference)
+        values.scoreChangeText = changeText
+        values.lastMeetTime = FormatMeetTime(previousSeen) or ""
+        message = ExpandTemplate(GetAnnounceTemplate("MEMBER_WELCOME_AGAIN_FORMAT"), values)
+    end
+    if not message then
+        message = ExpandTemplate(GetAnnounceTemplate("MEMBER_WELCOME_FORMAT"), values)
+    end
+    if not message then
         return false
     end
-    local okMsg, message = pcall(
-        string.format,
-        formatText,
-        name,
-        FormatScoreValue(score),
-        regionLabel,
-        FormatRankValue(rank)
-    )
-    if not okMsg or type(message) ~= "string" or message == "" then
-        return false
-    end
-    message = AppendUpdateTime(region, message, "MEMBER_WELCOME_UPDATE_TIME_FORMAT")
     if type(SendChatMessage) == "function" then
         local sent = pcall(SendChatMessage, message, "PARTY")
         if sent then
-            welcomeState.cooldown[guid] = now
+            if record then
+                record.score = score
+                record.name = name
+            end
             return true
         end
     end
     return false
 end
 
-local function ScheduleMemberWelcome(guid)
-    local attempts = 0
-    local function TryWelcome()
+local function ScheduleMemberWelcome(guid, record, previousScore, previousSeen)
+    local generation = pollGeneration
+    local TryWelcome
+    local function Retry()
+        if C_Timer and type(C_Timer.After) == "function" then
+            C_Timer.After(WELCOME_RETRY_INTERVAL, TryWelcome)
+        end
+    end
+    TryWelcome = function()
+        -- The run starting (or a newer poll generation) cancels every pending
+        -- welcome; polling otherwise continues until the score is available or
+        -- the member leaves.
+        if generation ~= pollGeneration or run.active then
+            return
+        end
         -- The member may have moved to a different party slot; re-locate by
         -- GUID. Only give up when they actually left the party.
         local currentUnit = FindUnitByGUID(guid)
@@ -500,32 +736,35 @@ local function ScheduleMemberWelcome(guid)
             return
         end
         if IsCombatLocked() then
-            -- stay pending until the player leaves combat
-            attempts = attempts + 1
-            if attempts < WELCOME_MAX_RETRIES and C_Timer and type(C_Timer.After) == "function" then
-                C_Timer.After(WELCOME_RETRY_INTERVAL, TryWelcome)
-            end
+            Retry()
             return
         end
-        if AnnounceMemberWelcome(currentUnit, guid) then
+        local score = ReadUnitMythicPlusScore(currentUnit)
+        if score
+            and AnnounceMemberWelcome(currentUnit, guid, score, record, previousScore, previousSeen)
+        then
             return
         end
-        attempts = attempts + 1
-        if attempts < WELCOME_MAX_RETRIES and C_Timer and type(C_Timer.After) == "function" then
-            C_Timer.After(WELCOME_RETRY_INTERVAL, TryWelcome)
-        end
+        Retry()
     end
-    if C_Timer and type(C_Timer.After) == "function" then
-        C_Timer.After(WELCOME_RETRY_INTERVAL, TryWelcome)
-    else
-        TryWelcome()
-    end
+    -- The first read is attempted immediately; retries only happen while the
+    -- score is not readable yet (or while combat lockdown blocks party chat UI
+    -- work), so an immediately available score is announced right away.
+    TryWelcome()
 end
 
 -- Refreshes the tracked party roster. New members are greeted only when
 -- announceNew is true (roster seeding at login must stay silent).
 local function RefreshRoster(announceNew)
-    local now = GetNow()
+    PruneEncounters()
+    -- Raid rosters are not tracked; keeping the party history avoids greeting
+    -- everyone again when a raid converts back to a party.
+    if type(IsInRaid) == "function" then
+        local ok, raid = pcall(IsInRaid)
+        if ok and raid then
+            return
+        end
+    end
     local seen = {}
     for _, unit in ipairs(GetPartyUnits()) do
         local guid = GetUnitGUID(unit)
@@ -538,19 +777,19 @@ local function RefreshRoster(announceNew)
             welcomeState.known[guid] = nil
         end
     end
-    -- Expired cooldown entries would otherwise accumulate all session long.
-    for guid, last in pairs(welcomeState.cooldown) do
-        if now - last > WELCOME_COOLDOWN then
-            welcomeState.cooldown[guid] = nil
-        end
-    end
     for guid, unit in pairs(seen) do
         if not welcomeState.known[guid] then
             welcomeState.known[guid] = true
-            if announceNew and IsWelcomeEligible() then
-                local last = welcomeState.cooldown[guid]
-                if not last or now - last > WELCOME_COOLDOWN then
-                    ScheduleMemberWelcome(guid)
+            -- Members joining mid-run are not counted or greeted: the lobby
+            -- welcome already ended when the key started.
+            if announceNew and not run.active and IsWelcomeEligible() then
+                local record, previousScore, previousSeen = RecordEncounter(
+                    guid,
+                    GetUnitDisplayName(unit),
+                    GetUnitRealm(unit)
+                )
+                if record then
+                    ScheduleMemberWelcome(guid, record, previousScore, previousSeen)
                 end
             end
         end
@@ -566,6 +805,8 @@ eventFrame:SetScript("OnEvent", function(_, event)
     if event == "CHALLENGE_MODE_START" then
         run.active = true
         run.scoreBefore = ReadPlayerScore()
+        -- Cancels every pending welcome poll chain.
+        pollGeneration = pollGeneration + 1
     elseif event == "CHALLENGE_MODE_COMPLETED" then
         SchedulePostRunCheck()
     elseif event == "PLAYER_ENTERING_WORLD" then
@@ -575,6 +816,21 @@ eventFrame:SetScript("OnEvent", function(_, event)
     end
 end)
 
+-- One-line state dump for the debug slash commands.
+local function DescribeAnnounceState()
+    local db = type(ns.GetDB) == "function" and ns.GetDB() or nil
+    return table.concat({
+        "announce:",
+        "region=" .. tostring(ns.GetSelectedRegion and ns.GetSelectedRegion() or nil),
+        "summary=" .. tostring(not (db and db.announceRunGain == false)),
+        "welcome=" .. tostring(not (db and db.announceMemberJoin == false)),
+        "teleport=" .. tostring(not (db and db.announceTeleport == false)),
+        "delay=" .. tostring(db and db.announceDelay or nil),
+        "runActive=" .. tostring(run.active == true),
+        "members=" .. tostring(#GetPartyUnits()),
+    }, " ")
+end
+
 -- Exposed for tests and diagnostics only.
 ns.RunSummary = {
     AnnounceRunGain = AnnounceRunGain,
@@ -582,5 +838,9 @@ ns.RunSummary = {
     ReadPlayerScore = ReadPlayerScore,
     RefreshRoster = RefreshRoster,
     AnnounceMemberWelcome = AnnounceMemberWelcome,
+    PruneEncounters = PruneEncounters,
     FormatDataVersionLocal = FormatDataVersionLocal,
+    ExpandTemplate = ExpandTemplate,
+    GetAnnounceTemplate = GetAnnounceTemplate,
+    DescribeAnnounceState = DescribeAnnounceState,
 }

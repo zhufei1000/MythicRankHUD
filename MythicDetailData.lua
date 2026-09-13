@@ -125,6 +125,11 @@ local function BuildAchievementTargets(API, region)
     end
     for _, definition in ipairs(ACHIEVEMENT_DEFS) do
         local ok, raw = pcall(API.GetAchievementCutoff, API, region, definition.key)
+        if not ok or raw == nil then
+            -- Older regional data packs exposed the key without a region
+            -- argument; keep working with them.
+            ok, raw = pcall(API.GetAchievementCutoff, API, definition.key)
+        end
         local value = SafeTable(raw)
         local threshold = value and SafeNumber(value.thresholdScore or value.score)
             or SafeNumber(raw)
@@ -765,7 +770,21 @@ function Data.RefreshOneResource(currencyID, quantityOverride)
     return resource
 end
 
+-- The map table is static for the session; asking the client for it on every
+-- refresh would spam the server side request for no benefit.
+local MAP_INFO_REQUEST_INTERVAL = 10
+local lastMapInfoRequestAt = nil
+
 function Data.RequestData()
+    local now = type(GetTime) == "function" and Util.SafeNumber(GetTime()) or nil
+    if now and now > 0 and lastMapInfoRequestAt
+        and (now - lastMapInfoRequestAt) < MAP_INFO_REQUEST_INTERVAL
+    then
+        return
+    end
+    if now and now > 0 then
+        lastMapInfoRequestAt = now
+    end
     if C_MythicPlus and type(C_MythicPlus.RequestMapInfo) == "function" then
         C_MythicPlus.RequestMapInfo()
     end

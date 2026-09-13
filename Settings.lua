@@ -3,10 +3,9 @@ local L = ns.L
 
 local categoryID
 local showHUDCheck
-local announceTeleportCheck
-local announceRunGainCheck
-local announceMemberJoinCheck
 local announceDelaySlider
+local announceChecks = {}
+local templateBoxes = {}
 local detailCheck
 local borderAlphaSlider
 local backgroundAlphaSlider
@@ -54,6 +53,10 @@ local function PrintDebugInfo()
         print("PremadeGroupBoardFrame exists: " .. tostring(_G.PremadeGroupBoardFrame ~= nil))
         print("Attach attempts: " .. tostring(integration.attachAttempts or 0)
             .. ", watcher scheduled: " .. tostring(integration.attachCheckScheduled == true))
+    end
+    local summary = ns.RunSummary
+    if summary and type(summary.DescribeAnnounceState) == "function" then
+        print(summary.DescribeAnnounceState())
     end
 end
 
@@ -110,10 +113,42 @@ local function SetChecked(check, value)
     check:SetChecked(value and true or false)
 end
 
-local function CreateCheckButton(parent, x, y, label, onClick)
-    local check = CreateFrame("CheckButton", nil, parent, "UICheckButtonTemplate")
+local function SetControlLabel(control, label)
+    if control.Text then
+        control.Text:SetText(label)
+        return
+    end
+    -- Radio templates have no text region on some clients; attach one and
+    -- widen the hit rectangle so clicking the label selects the option too.
+    if not control.LabelText then
+        control.LabelText = control:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
+        control.LabelText:SetPoint("LEFT", control, "RIGHT", 6, 0)
+        control.LabelText:SetJustifyH("LEFT")
+    end
+    control.LabelText:SetText(label)
+    if type(control.SetHitRectInsets) == "function" then
+        local width
+        if type(control.LabelText.GetStringWidth) == "function" then
+            width = control.LabelText:GetStringWidth()
+        end
+        if type(width) ~= "number" or width <= 0 then
+            width = #tostring(label) * 8
+        end
+        control:SetHitRectInsets(0, -(width + 12), 0, 0)
+    end
+end
+
+local function CreateCheckButton(parent, x, y, label, onClick, template)
+    local check
+    if template then
+        local ok, created = pcall(CreateFrame, "CheckButton", nil, parent, template)
+        if ok and created then
+            check = created
+        end
+    end
+    check = check or CreateFrame("CheckButton", nil, parent, "UICheckButtonTemplate")
     check:SetPoint("TOPLEFT", parent, "TOPLEFT", x, y)
-    check.Text:SetText(label)
+    SetControlLabel(check, label)
     check:SetScript("OnClick", function(self)
         onClick(self:GetChecked() and true or false)
     end)
@@ -121,17 +156,14 @@ local function CreateCheckButton(parent, x, y, label, onClick)
 end
 
 local function CreateBorderOption(parent, x, y, key, label)
-    local check = CreateFrame("CheckButton", nil, parent, "UICheckButtonTemplate")
-    check:SetPoint("TOPLEFT", parent, "TOPLEFT", x, y)
-    check.Text:SetText(label)
-    check:SetScript("OnClick", function()
+    local check = CreateCheckButton(parent, x, y, label, function()
         ns.SetHUDBorderStyle(key)
         for style, button in pairs(borderChecks) do
             SetChecked(button, style == key)
         end
         ns.ApplyHUDStyle()
         ns.ApplyDetailStyle()
-    end)
+    end, "UIRadioButtonTemplate")
     borderChecks[key] = check
     return check
 end
@@ -169,6 +201,45 @@ local function CreateSlider(parent, x, y, width, lowText, highText, minValue, ma
     return slider
 end
 
+-- A gold section title with a divider line gives the long scroll page a
+-- readable hierarchy; both helpers return the next cursor position.
+local function CreateSectionHeader(parent, text, y, width)
+    local title = parent:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+    title:SetPoint("TOPLEFT", parent, "TOPLEFT", 16, y)
+    title:SetWidth(math.max(100, width - 32))
+    title:SetJustifyH("LEFT")
+    title:SetText(text)
+    title:SetTextColor(1, 0.82, 0)
+    local line = parent:CreateTexture(nil, "ARTWORK")
+    line:SetPoint("TOPLEFT", parent, "TOPLEFT", 16, y - 19)
+    line:SetSize(math.max(100, width - 32), 1)
+    line:SetColorTexture(1, 0.82, 0, 0.22)
+    return y - 30
+end
+
+local function CreateDescription(parent, text, y, width)
+    if type(text) ~= "string" or text == "" then
+        return y
+    end
+    local desc = parent:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+    desc:SetPoint("TOPLEFT", parent, "TOPLEFT", 16, y)
+    desc:SetWidth(math.max(100, width - 32))
+    desc:SetJustifyH("LEFT")
+    if desc.SetWordWrap then
+        desc:SetWordWrap(true)
+    end
+    desc:SetText(text)
+    desc:SetTextColor(0.62, 0.62, 0.62)
+    return y - 18
+end
+
+local function CreateOptionLabel(parent, x, y, text)
+    local label = parent:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
+    label:SetPoint("TOPLEFT", parent, "TOPLEFT", x, y)
+    label:SetText(text)
+    return label
+end
+
 local function RefreshControls()
     local db = ns.GetDB()
     refreshingControls = true
@@ -176,18 +247,23 @@ local function RefreshControls()
     if showHUDCheck then
         SetChecked(showHUDCheck, db.showHUD)
     end
-    if announceTeleportCheck then
-        SetChecked(announceTeleportCheck, db.announceTeleport ~= false)
+    if announceChecks.announceTeleport then
+        SetChecked(announceChecks.announceTeleport, db.announceTeleport ~= false)
     end
-    if announceRunGainCheck then
-        SetChecked(announceRunGainCheck, db.announceRunGain ~= false)
+    if announceChecks.announceRunGain then
+        SetChecked(announceChecks.announceRunGain, db.announceRunGain ~= false)
     end
-    if announceMemberJoinCheck then
-        SetChecked(announceMemberJoinCheck, db.announceMemberJoin ~= false)
+    if announceChecks.announceMemberJoin then
+        SetChecked(announceChecks.announceMemberJoin, db.announceMemberJoin ~= false)
     end
     if announceDelaySlider then
         announceDelaySlider:SetValue(db.announceDelay or 5)
         SetSliderText(announceDelaySlider, string.format(L.ANNOUNCE_DELAY_SECONDS, math.floor((db.announceDelay or 5) + 0.5)))
+    end
+    for key, box in pairs(templateBoxes) do
+        if box then
+            box:SetText(ns.GetAnnounceTemplate(key) or L[key] or "")
+        end
     end
     if detailCheck then
         SetChecked(detailCheck, db.enableMythicDetail ~= false)
@@ -237,8 +313,11 @@ local function CreateSettingsPanel()
     scrollFrame:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", -28, 4)
     scrollFrame:EnableMouseWheel(true)
 
+    -- The canvas width drives the two-column grid; the content height is set
+    -- once the controls are built so the scrollbar matches the real page.
+    local contentWidth = 620
     local content = CreateFrame("Frame", nil, scrollFrame)
-    content:SetSize(620, 780)
+    content:SetSize(contentWidth, 100)
     scrollFrame:SetScrollChild(content)
 
     scrollFrame:SetScript("OnMouseWheel", function(self, delta)
@@ -250,7 +329,8 @@ local function CreateSettingsPanel()
 
     panel:SetScript("OnSizeChanged", function(_, width)
         if width and width > 0 then
-            content:SetWidth(math.max(600, width - 44))
+            contentWidth = math.max(600, width - 44)
+            content:SetWidth(contentWidth)
         end
     end)
 
@@ -260,56 +340,62 @@ local function CreateSettingsPanel()
         end
         controlsCreated = true
 
-    local title = content:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
-    title:SetPoint("TOPLEFT", content, "TOPLEFT", 16, -16)
-    title:SetText(L.ADDON_TITLE)
+    local width = contentWidth
+    local columnX = math.floor(width / 2) + 6
+    local y = -14
 
-    showHUDCheck = CreateCheckButton(content, 18, -56, L.SETTINGS_SHOW_HUD, function(checked)
+    local title = content:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
+    title:SetPoint("TOPLEFT", content, "TOPLEFT", 16, y)
+    title:SetText(L.ADDON_TITLE)
+    local version = content:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+    version:SetPoint("TOPRIGHT", content, "TOPRIGHT", -16, y + 2)
+    version:SetText("v" .. tostring(GetAddOnVersion()))
+    version:SetTextColor(0.55, 0.55, 0.55)
+    y = y - 32
+
+    -- Group Finder HUD -------------------------------------------------------
+    y = CreateSectionHeader(content, L.SETTINGS_SECTION_HUD or "Group Finder HUD", y, width)
+    showHUDCheck = CreateCheckButton(content, 18, y, L.SETTINGS_SHOW_HUD, function(checked)
         ns.SetHUDShown(checked)
     end)
+    y = y - 26
+    y = CreateDescription(content, L.SETTINGS_SHOW_HUD_DESC, y, width)
+    y = y - 12
 
-    announceTeleportCheck = CreateCheckButton(content, 326, -56, L.SETTINGS_ANNOUNCE_TELEPORT, function(checked)
-        ns.SetTeleportAnnouncementEnabled(checked)
-    end)
-
-    announceRunGainCheck = CreateCheckButton(content, 326, -88, L.SETTINGS_ANNOUNCE_RUN_GAIN, function(checked)
-        ns.SetRunGainAnnouncementEnabled(checked)
-    end)
-
-    announceMemberJoinCheck = CreateCheckButton(content, 326, -120, L.SETTINGS_ANNOUNCE_MEMBER_JOIN, function(checked)
-        ns.SetMemberWelcomeEnabled(checked)
-    end)
-
-    local rowsLabel = content:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-    rowsLabel:SetPoint("TOPLEFT", content, "TOPLEFT", 20, -104)
-    rowsLabel:SetText(L.SETTINGS_VISIBLE_ROWS)
-
+    -- Displayed rows --------------------------------------------------------
+    y = CreateSectionHeader(content, L.SETTINGS_VISIBLE_ROWS, y, width)
+    y = CreateDescription(content, L.SETTINGS_VISIBLE_ROWS_DESC, y, width)
+    y = y - 2
+    local rowsTop = y
     for index, option in ipairs(ROW_OPTIONS) do
         local optionKey = option.key
         local optionLabel = option.label
         local column = index <= 6 and 0 or 1
         local rowIndex = column == 0 and index or index - 6
-        local x = column == 0 and 18 or 326
-        local y = (column == 0 and -128 or -152) - ((rowIndex - 1) * 32)
-        local check = CreateCheckButton(content, x, y, L[optionLabel], function(checked)
+        local x = column == 0 and 18 or columnX
+        local rowY = rowsTop - ((rowIndex - 1) * 26)
+        local check = CreateCheckButton(content, x, rowY, L[optionLabel], function(checked)
             ns.SetRowVisible(optionKey, checked)
         end)
         rowChecks[optionKey] = check
     end
+    y = rowsTop - (6 * 26) - 4
 
-    local borderStyleLabel = content:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-    borderStyleLabel:SetPoint("TOPLEFT", content, "TOPLEFT", 20, -340)
-    borderStyleLabel:SetText(L.SETTINGS_BORDER_STYLE)
+    -- Appearance ------------------------------------------------------------
+    y = CreateSectionHeader(content, L.SETTINGS_SECTION_APPEARANCE or "Appearance", y, width)
+    y = CreateDescription(content, L.SETTINGS_APPEARANCE_DESC, y, width)
+    y = y - 2
+    CreateOptionLabel(content, 18, y, L.SETTINGS_BORDER_STYLE)
+    y = y - 24
+    CreateBorderOption(content, 18, y, "transparent", L.SETTINGS_BORDER_TRANSPARENT)
+    CreateBorderOption(content, 170, y, "gold", L.SETTINGS_BORDER_GOLD)
+    CreateBorderOption(content, 300, y, "class", L.SETTINGS_BORDER_CLASS)
+    y = y - 34
 
-    CreateBorderOption(content, 18, -364, "transparent", L.SETTINGS_BORDER_TRANSPARENT)
-    CreateBorderOption(content, 170, -364, "gold", L.SETTINGS_BORDER_GOLD)
-    CreateBorderOption(content, 300, -364, "class", L.SETTINGS_BORDER_CLASS)
-
-    local borderAlphaLabel = content:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-    borderAlphaLabel:SetPoint("TOPLEFT", content, "TOPLEFT", 20, -418)
-    borderAlphaLabel:SetText(L.SETTINGS_BORDER_ALPHA)
-
-    borderAlphaSlider = CreateSlider(content, 24, -448, 240, "0%", "100%", 0, 1, 0.05, function(slider, value)
+    CreateOptionLabel(content, 18, y, L.SETTINGS_BORDER_ALPHA)
+    CreateOptionLabel(content, columnX, y, L.SETTINGS_BACKGROUND_ALPHA)
+    y = y - 30
+    borderAlphaSlider = CreateSlider(content, 22, y, 240, "0%", "100%", 0, 1, 0.05, function(slider, value)
         value = math.floor(value * 20 + 0.5) / 20
         SetSliderText(slider, string.format("%d%%", math.floor(value * 100 + 0.5)))
         if not refreshingControls then
@@ -318,11 +404,7 @@ local function CreateSettingsPanel()
         end
     end)
 
-    local backgroundAlphaLabel = content:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-    backgroundAlphaLabel:SetPoint("TOPLEFT", content, "TOPLEFT", 336, -418)
-    backgroundAlphaLabel:SetText(L.SETTINGS_BACKGROUND_ALPHA)
-
-    backgroundAlphaSlider = CreateSlider(content, 340, -448, 240, "0%", "100%", 0, 1, 0.05, function(slider, value)
+    backgroundAlphaSlider = CreateSlider(content, columnX + 4, y, 240, "0%", "100%", 0, 1, 0.05, function(slider, value)
         value = math.floor(value * 20 + 0.5) / 20
         SetSliderText(slider, string.format("%d%%", math.floor(value * 100 + 0.5)))
         if not refreshingControls then
@@ -330,21 +412,19 @@ local function CreateSettingsPanel()
             QueueHUDStyleApply()
         end
     end)
+    y = y - 46
 
-    local detailGroupLabel = content:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-    detailGroupLabel:SetPoint("TOPLEFT", content, "TOPLEFT", 20, -540)
-    detailGroupLabel:SetText(L.SETTINGS_DETAIL_GROUP)
-
-    detailCheck = CreateCheckButton(content, 18, -566, L.SETTINGS_ENABLE_DETAIL, function(checked)
+    -- Details window --------------------------------------------------------
+    y = CreateSectionHeader(content, L.SETTINGS_DETAIL_GROUP, y, width)
+    detailCheck = CreateCheckButton(content, 18, y, L.SETTINGS_ENABLE_DETAIL, function(checked)
         ns.SetDetailEnabled(checked)
         ns.ApplyDetailFeatureState()
     end)
-
-    local detailBorderAlphaLabel = content:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-    detailBorderAlphaLabel:SetPoint("TOPLEFT", content, "TOPLEFT", 20, -618)
-    detailBorderAlphaLabel:SetText(L.SETTINGS_DETAIL_BORDER_ALPHA)
-
-    detailBorderAlphaSlider = CreateSlider(content, 24, -648, 240, "0%", "100%", 0, 1, 0.05, function(slider, value)
+    y = y - 34
+    CreateOptionLabel(content, 18, y, L.SETTINGS_DETAIL_BORDER_ALPHA)
+    CreateOptionLabel(content, columnX, y, L.SETTINGS_DETAIL_BACKGROUND_ALPHA)
+    y = y - 30
+    detailBorderAlphaSlider = CreateSlider(content, 22, y, 240, "0%", "100%", 0, 1, 0.05, function(slider, value)
         value = math.floor(value * 20 + 0.5) / 20
         SetSliderText(slider, string.format("%d%%", math.floor(value * 100 + 0.5)))
         if not refreshingControls then
@@ -353,11 +433,7 @@ local function CreateSettingsPanel()
         end
     end)
 
-    local detailBackgroundAlphaLabel = content:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-    detailBackgroundAlphaLabel:SetPoint("TOPLEFT", content, "TOPLEFT", 336, -618)
-    detailBackgroundAlphaLabel:SetText(L.SETTINGS_DETAIL_BACKGROUND_ALPHA)
-
-    detailBackgroundAlphaSlider = CreateSlider(content, 340, -648, 240, "0%", "100%", 0, 1, 0.05, function(slider, value)
+    detailBackgroundAlphaSlider = CreateSlider(content, columnX + 4, y, 240, "0%", "100%", 0, 1, 0.05, function(slider, value)
         value = math.floor(value * 20 + 0.5) / 20
         SetSliderText(slider, string.format("%d%%", math.floor(value * 100 + 0.5)))
         if not refreshingControls then
@@ -365,18 +441,105 @@ local function CreateSettingsPanel()
             QueueDetailStyleApply()
         end
     end)
+    y = y - 46
 
-    local announceDelayLabel = content:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-    announceDelayLabel:SetPoint("TOPLEFT", content, "TOPLEFT", 20, -694)
+    -- Announcements ---------------------------------------------------------
+    y = CreateSectionHeader(content, L.SETTINGS_ANNOUNCE_TEXTS, y, width)
+    y = CreateDescription(content, L.SETTINGS_ANNOUNCE_DESC, y, width)
+
+    -- One cursor drives the whole section: every control is placed below the
+    -- previous one, so a longer label or a wrapped line can never overlap.
+    local rowY = y - 2
+    local function AddTemplateRow(fieldKey, labelKey)
+        local fieldLabel = content:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
+        fieldLabel:SetPoint("TOPLEFT", content, "TOPLEFT", 44, rowY)
+        fieldLabel:SetText(L[labelKey])
+        rowY = rowY - 20
+        local box = CreateFrame("EditBox", nil, content, "InputBoxTemplate")
+        box:SetSize(520, 26)
+        box:SetPoint("TOPLEFT", content, "TOPLEFT", 44, rowY)
+        box:SetAutoFocus(false)
+        box:SetScript("OnEnterPressed", function(self)
+            ns.SetAnnounceTemplate(fieldKey, self:GetText())
+            self:SetText(ns.GetAnnounceTemplate(fieldKey) or L[fieldKey] or "")
+            self:ClearFocus()
+        end)
+        box:SetScript("OnEscapePressed", function(self)
+            self:SetText(ns.GetAnnounceTemplate(fieldKey) or L[fieldKey] or "")
+            self:ClearFocus()
+        end)
+        box:SetScript("OnEditFocusLost", function(self)
+            ns.SetAnnounceTemplate(fieldKey, self:GetText())
+        end)
+        templateBoxes[fieldKey] = box
+        rowY = rowY - 36
+    end
+
+    -- Each switch sits directly above the templates it turns on and off.
+    local function AddAnnouncement(titleKey, checkKey, setterName, templates)
+        announceChecks[checkKey] = CreateCheckButton(content, 18, rowY, L[titleKey], function(checked)
+            ns[setterName](checked)
+        end)
+        rowY = rowY - 32
+        for _, field in ipairs(templates) do
+            AddTemplateRow(field.key, field.label)
+        end
+        rowY = rowY - 14
+    end
+
+    AddAnnouncement("SETTINGS_ANNOUNCE_TELEPORT", "announceTeleport", "SetTeleportAnnouncementEnabled", {
+        { key = "TELEPORT_ANNOUNCEMENT_FORMAT", label = "SETTINGS_TEXT_TELEPORT" },
+    })
+
+    AddAnnouncement("SETTINGS_ANNOUNCE_RUN_GAIN", "announceRunGain", "SetRunGainAnnouncementEnabled", {
+        { key = "RUN_GAIN_LINE_GAIN", label = "SETTINGS_TEXT_RUN_LINE_GAIN" },
+        { key = "RUN_GAIN_LINE_NO_GAIN", label = "SETTINGS_TEXT_RUN_LINE_NO_GAIN" },
+        { key = "RUN_GAIN_LINE_TODAY", label = "SETTINGS_TEXT_RUN_LINE_TODAY" },
+        { key = "RUN_GAIN_LINE_CURRENT", label = "SETTINGS_TEXT_RUN_LINE_CURRENT" },
+        { key = "RUN_GAIN_LINE_AD", label = "SETTINGS_TEXT_RUN_LINE_AD" },
+    })
+
+    -- The delay belongs to the run announcement it delays.
+    local announceDelayLabel = content:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
+    announceDelayLabel:SetPoint("TOPLEFT", content, "TOPLEFT", 44, rowY)
     announceDelayLabel:SetText(L.SETTINGS_ANNOUNCE_DELAY)
+    rowY = rowY - 22
 
-    announceDelaySlider = CreateSlider(content, 24, -724, 240, "0", "30", 0, 30, 1, function(slider, value)
+    announceDelaySlider = CreateSlider(content, 48, rowY, 240, "0", "30", 0, 30, 1, function(slider, value)
         value = math.floor(value + 0.5)
         SetSliderText(slider, string.format(L.ANNOUNCE_DELAY_SECONDS, value))
         if not refreshingControls then
             ns.SetRunAnnounceDelay(value)
         end
     end)
+    rowY = rowY - 54
+
+    AddAnnouncement("SETTINGS_ANNOUNCE_MEMBER_JOIN", "announceMemberJoin", "SetMemberWelcomeEnabled", {
+        { key = "MEMBER_WELCOME_FORMAT", label = "SETTINGS_TEXT_WELCOME" },
+        { key = "MEMBER_WELCOME_AGAIN_FORMAT", label = "SETTINGS_TEXT_WELCOME_AGAIN" },
+    })
+
+    -- The placeholder list comes last: it wraps to as many lines as the client
+    -- needs, so it is placed where nothing follows it but the reset button.
+    local hintText = content:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+    hintText:SetPoint("TOPLEFT", content, "TOPLEFT", 18, rowY)
+    hintText:SetWidth(math.max(480, width - 40))
+    hintText:SetJustifyH("LEFT")
+    hintText:SetText(L.SETTINGS_TEXT_HINT)
+    rowY = rowY - 96
+
+    local resetTextsButton = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
+    resetTextsButton:SetSize(160, 24)
+    resetTextsButton:SetPoint("TOPLEFT", content, "TOPLEFT", 18, rowY)
+    resetTextsButton:SetText(L.SETTINGS_TEXT_RESET)
+    resetTextsButton:SetScript("OnClick", function()
+        ns.ResetAnnounceTemplates()
+        RefreshControls()
+        PrintAddonMessage(L.SETTINGS_TEXT_RESET_DONE)
+    end)
+    rowY = rowY - 40
+
+    content:SetHeight(math.max(620, -rowY))
 
     end
 
@@ -423,6 +586,11 @@ SlashCmdList.QFXMYTHICRANKHUDGLOBAL = function(message)
         PrintAddonMessage(L.SLASH_HELP)
     end
 end
+
+-- The regional build shipped as /qfxrank before both variants shared one code
+-- base; keep the alias working there (and harmlessly elsewhere).
+SLASH_QFXMYTHICRANKHUD1 = "/qfxrank"
+SlashCmdList.QFXMYTHICRANKHUD = SlashCmdList.QFXMYTHICRANKHUDGLOBAL
 
 function ns.InitializeSettings()
     CreateSettingsPanel()

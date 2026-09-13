@@ -6,13 +6,15 @@
 ## Notes-zhCN: 显示国服大秘境预计排名、超越比例、每日分数与排名提升。
 ## Notes-zhTW: 顯示中國區傳奇鑰石預估排名、超越比例、每日分數與排名提升。
 ## Author: QFX
-## Version: 1.3.27
+## Version: 1.3.29
 ## IconTexture: Interface\Icons\Achievement_ChallengeMode_Gold
 ## OptionalDeps: GroupFinder, PremadeGroupBoard, MeetingStone_Happy, MeetingStoneHappy, MeetingStoneEX, MeetingStone, QFXMythicRankData_CN, QFXMythicRankData_US, QFXMythicRankData_EU, QFXMythicRankData_KR, QFXMythicRankData_TW
 ## SavedVariables: QFXMythicRankHUDDB
+## SavedVariablesPerCharacter: QFXMythicRankHUDCharDB
 
 Util.lua
 Locale.lua
+LocaleCN.lua
 Region.lua
 RankTarget.lua
 Core.lua

@@ -90,8 +90,13 @@ C_Timer = {
     end,
 }
 
-QFXMythicRankHUDGlobalDB = nil
+QFXMythicRankHUDGlobalDB = {
+    encounters = {
+        ["GUID-MIGRATE"] = { score = 1234, count = 2, lastSeen = 111 },
+    },
+}
 QFXMythicRankHUDDB = nil
+QFXMythicRankHUDGlobalCharDB = nil
 QFXMythicRankData = {
     GetMetadata = function()
         return {
@@ -210,6 +215,14 @@ end
 
 assert(eventFrame, "Core event frame was not created")
 eventFrame.scripts.OnEvent(eventFrame, "ADDON_LOADED", addonName)
+
+-- Encounter history moved from the account database to a per-character one.
+assert(type(QFXMythicRankHUDGlobalCharDB) == "table", "per-character database was not created")
+assert(QFXMythicRankHUDGlobalCharDB.encounters["GUID-MIGRATE"] ~= nil,
+    "account-level encounters were not migrated")
+assert(QFXMythicRankHUDGlobalDB.encounters == nil, "account encounter table was not cleared")
+assert(namespace.GetCharacterDB() == QFXMythicRankHUDGlobalCharDB,
+    "GetCharacterDB did not return the per-character database")
 
 assert(namespace.GetDB().announceTeleport == true, "teleport announcements are not enabled by default")
 namespace.SetTeleportAnnouncementEnabled(false)

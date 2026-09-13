@@ -23,6 +23,7 @@ local DEFAULTS = {
     announceRunGain = true,
     announceMemberJoin = true,
     announceDelay = 5,
+    announceTexts = {},
     enableMythicDetail = true,
     borderStyle = "gold",
     borderAlpha = 0.85,
@@ -69,9 +70,16 @@ for _, key in ipairs(ROW_ORDER) do
     rows[key] = { key = key }
 end
 local hudSnapshot = {}
+local hudSnapshotSignature
 local db
+local characterDB
 local databaseInitialized = false
 local englishTextWarningPrinted = false
+local CLIENT_LOCALE = type(GetLocale) == "function" and GetLocale() or nil
+local DB_GLOBAL_NAME = ADDON_NAME == "QFXMythicRankHUD" and "QFXMythicRankHUDDB"
+    or "QFXMythicRankHUDGlobalDB"
+local CHAR_DB_GLOBAL_NAME = ADDON_NAME == "QFXMythicRankHUD" and "QFXMythicRankHUDCharDB"
+    or "QFXMythicRankHUDGlobalCharDB"
 local GOLD_R, GOLD_G, GOLD_B = 1.0, 0.82, 0.0
 
 local function CopyDefaults(target, defaults)
@@ -93,7 +101,8 @@ local function InitializeDatabase()
         return db
     end
 
-    local oldDB = type(QFXMythicRankHUDGlobalDB) == "table" and QFXMythicRankHUDGlobalDB or nil
+    local existingGlobal = _G[DB_GLOBAL_NAME]
+    local oldDB = type(existingGlobal) == "table" and existingGlobal or nil
     local hadShowRows = oldDB and type(oldDB.showRows) == "table"
     local oldShowRanges = oldDB and oldDB.showRanges
     local hadDetailBorderAlpha = oldDB and oldDB.detailBorderAlpha ~= nil
@@ -101,14 +110,15 @@ local function InitializeDatabase()
     local legacyBorderAlpha = oldDB and oldDB.borderAlpha or nil
     local legacyBackgroundAlpha = oldDB and oldDB.backgroundAlpha or nil
 
-    QFXMythicRankHUDGlobalDB = CopyDefaults(oldDB, DEFAULTS)
+    local globalDB = CopyDefaults(oldDB, DEFAULTS)
+    _G[DB_GLOBAL_NAME] = globalDB
 
     if not hadShowRows and oldShowRanges == true then
-        QFXMythicRankHUDGlobalDB.showRows.rankRange = true
-        QFXMythicRankHUDGlobalDB.showRows.percentileRange = true
+        globalDB.showRows.rankRange = true
+        globalDB.showRows.percentileRange = true
     end
 
-    db = QFXMythicRankHUDGlobalDB
+    db = globalDB
     db.showRanges = nil
 
     if type(db.showHUD) ~= "boolean" then
@@ -124,6 +134,9 @@ local function InitializeDatabase()
         db.announceMemberJoin = DEFAULTS.announceMemberJoin
     end
     db.announceDelay = Util.ClampNumber(db.announceDelay, 0, 60, DEFAULTS.announceDelay)
+    if type(db.announceTexts) ~= "table" then
+        db.announceTexts = {}
+    end
     if type(db.enableMythicDetail) ~= "boolean" then
         db.enableMythicDetail = DEFAULTS.enableMythicDetail
     end
@@ -165,12 +178,35 @@ local function InitializeDatabase()
         end
     end
 
+    -- Encounter history is stored per character, not per account.
+    local existingCharacter = _G[CHAR_DB_GLOBAL_NAME]
+    characterDB = type(existingCharacter) == "table" and existingCharacter or {}
+    _G[CHAR_DB_GLOBAL_NAME] = characterDB
+    if type(characterDB.encounters) ~= "table" then
+        characterDB.encounters = {}
+    end
+    -- One-time migration: the encounter table used to live in the
+    -- account-wide database.
+    if type(globalDB.encounters) == "table" then
+        for guid, record in pairs(globalDB.encounters) do
+            if characterDB.encounters[guid] == nil then
+                characterDB.encounters[guid] = record
+            end
+        end
+        globalDB.encounters = nil
+    end
+
     databaseInitialized = true
     return db
 end
 
 local function GetDB()
     return db or InitializeDatabase()
+end
+
+function ns.GetCharacterDB()
+    GetDB()
+    return characterDB
 end
 
 local function GetCharacterKey()
@@ -192,7 +228,10 @@ local function GetDateKey()
             return string.format("%04d%02d%02d", calendar.year, calendar.month, calendar.monthDay)
         end
     end
-    return date("%Y%m%d")
+    if type(date) == "function" then
+        return date("%Y%m%d")
+    end
+    return "unknown"
 end
 
 local function FormatVersionTimestamp(version)
@@ -232,10 +271,14 @@ local function FormatCompactRank(value)
     if type(value) ~= "number" then
         return "--"
     end
+    if CLIENT_LOCALE == "zhCN" or CLIENT_LOCALE == "zhTW" then
+        if value >= 10000 then
+            return string.format("%.1f万", value / 10000)
+        end
+        return FormatInteger(value)
+    end
     if value >= 1000000 then
         return string.format("%.2fM", value / 1000000)
-    elseif value >= 1000 then
-        return FormatInteger(value)
     end
     return FormatInteger(value)
 end
@@ -353,6 +396,7 @@ local function UpdateDailyScoreStateOnly()
 end
 
 local function SetUnavailable(message)
+    hudSnapshotSignature = nil
     local unavailable = message or L.UNAVAILABLE
     local regionLabel = ns.GetSelectedRegionLabel()
     local rankLabel = regionLabel and string.format(L.REGION_RANK_FORMAT, regionLabel)
@@ -384,6 +428,11 @@ local function GetHUDAchievementTargets(API, region)
     local targets = {}
     for _, definition in ipairs(definitions) do
         local ok, raw = pcall(API.GetAchievementCutoff, API, region, definition.key)
+        if not ok or raw == nil then
+            -- Older regional data packs exposed the key without a region
+            -- argument; keep working with them.
+            ok, raw = pcall(API.GetAchievementCutoff, API, definition.key)
+        end
         local value = Util.SafeTable(raw)
         local threshold = Util.SafeNumber(value and (value.thresholdScore or value.score) or raw)
         if threshold then
@@ -398,7 +447,19 @@ local function GetHUDAchievementTargets(API, region)
     return targets
 end
 
-local function RefreshHUDData()
+local function GetAPICapabilityMask(API)
+    if type(API) ~= "table" then
+        return "0"
+    end
+    local mask = 0
+    if type(API.GetMetadata) == "function" then mask = mask + 1 end
+    if type(API.GetCutoff) == "function" then mask = mask + 2 end
+    if type(API.GetPlayerScore) == "function" then mask = mask + 4 end
+    if type(API.EstimateRank) == "function" then mask = mask + 8 end
+    return tostring(mask)
+end
+
+local function RefreshHUDData(force)
 
     local API = _G.QFXMythicRankData
     local region = ns.GetSelectedRegion()
@@ -443,6 +504,27 @@ local function RefreshHUDData()
         SetUnavailable()
         return
     end
+
+    -- The rows only change when the region, the data pack, the player's score,
+    -- the daily baseline or the cutoffs change; the heavy estimate work below
+    -- is skipped while the snapshot still matches this signature.
+    local signature = table.concat({
+        region,
+        GetAPICapabilityMask(API),
+        score ~= nil and tostring(score) or "nil",
+        Util.SafeString(metadata.dataVersion) or "",
+        tostring(Util.SafeNumber(metadata.population) or ""),
+        tostring(cutoff01Score),
+        tostring(cutoff1Score),
+        tostring(cutoff10Score),
+        tostring(cutoff25Score),
+        tostring(cutoff40Score),
+        GetDateKey(),
+    }, "|")
+    if not force and signature == hudSnapshotSignature then
+        return
+    end
+    hudSnapshotSignature = signature
 
     local c01r, c01g, c01b = HexToRGB(cutoff01.color)
     local c1r, c1g, c1b = HexToRGB(cutoff1.color)
@@ -657,12 +739,12 @@ local function RefreshHUDData()
 end
 
 function ns.RefreshHUDData()
-    RefreshHUDData()
+    RefreshHUDData(true)
 end
 
 function ns.GetHUDSnapshot(refresh)
     if refresh ~= false then
-        RefreshHUDData()
+        RefreshHUDData(false)
     end
     return hudSnapshot, GetDB().showRows
 end
@@ -717,6 +799,33 @@ end
 function ns.SetRunAnnounceDelay(value)
     GetDB().announceDelay = Util.ClampNumber(value, 0, 60, DEFAULTS.announceDelay)
 end
+
+-- Announcement templates: an empty/nil override falls back to the locale
+-- default, so clearing a settings box restores the built-in text.
+function ns.GetAnnounceTemplate(key)
+    local texts = GetDB().announceTexts
+    if type(texts) == "table" and type(texts[key]) == "string" and texts[key] ~= "" then
+        return texts[key]
+    end
+    return nil
+end
+
+function ns.SetAnnounceTemplate(key, text)
+    local db = GetDB()
+    if type(db.announceTexts) ~= "table" then
+        db.announceTexts = {}
+    end
+    if type(text) ~= "string" or text == "" then
+        db.announceTexts[key] = nil
+    else
+        db.announceTexts[key] = text
+    end
+end
+
+function ns.ResetAnnounceTemplates()
+    GetDB().announceTexts = {}
+end
+
 
 function ns.GetDailyBaselineScore()
     local state = GetDB().characters[GetCharacterKey()]
