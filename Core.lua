@@ -19,7 +19,7 @@ local DEFAULT_ROW_VISIBILITY = {
 
 local DEFAULTS = {
     showHUD = true,
-    announceTeleport = true,
+    announceTeleport = false,
     announceRunGain = true,
     announceMemberJoin = true,
     announceDelay = 5,

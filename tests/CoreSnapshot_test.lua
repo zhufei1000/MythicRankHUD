@@ -224,10 +224,10 @@ assert(QFXMythicRankHUDGlobalDB.encounters == nil, "account encounter table was 
 assert(namespace.GetCharacterDB() == QFXMythicRankHUDGlobalCharDB,
     "GetCharacterDB did not return the per-character database")
 
-assert(namespace.GetDB().announceTeleport == true, "teleport announcements are not enabled by default")
-namespace.SetTeleportAnnouncementEnabled(false)
-assert(namespace.IsTeleportAnnouncementEnabled() == false, "teleport announcement setting did not disable")
+assert(namespace.GetDB().announceTeleport == false, "teleport announcements are not disabled by default")
 namespace.SetTeleportAnnouncementEnabled(true)
+assert(namespace.IsTeleportAnnouncementEnabled() == true, "teleport announcement setting did not enable")
+namespace.SetTeleportAnnouncementEnabled(false)
 
 local frameCountBeforeSnapshot = #createdFrames
 local snapshot = namespace.GetHUDSnapshot(true)
