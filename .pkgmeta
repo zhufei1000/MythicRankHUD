@@ -3,6 +3,7 @@
 # composed from the same Lua sources by tools/build_release.ps1.
 package-as: MythicRankHUD
 ignore:
+  - README.md
   - .agents
   - .codex
   - .github
