@@ -79,26 +79,16 @@ local function RoundNumber(value)
     return math.floor(value + 0.5)
 end
 
--- The standard data API stops its single-rank estimate at the Top 40% line,
--- while the CN data pack also exposes ranked achievement cutoff nodes below it.
-function Util.EstimateRankBelowTop40(API, region, score, faction)
-    local normalizedScore = Util.SafeNumber(score)
-    if type(API) ~= "table"
-        or type(API.GetCutoff) ~= "function"
-        or type(region) ~= "string"
-        or not normalizedScore
-    then
-        return nil
-    end
+-- The data API's normal rank estimate stops at the published Top 40% cutoff,
+-- even though the data pack also contains ranked achievement cutoff nodes.
+-- Use those nodes to extend the same logarithmic rank interpolation downward.
+-- Results are memoized because the HUD refresh estimates the current and the
+-- daily baseline score separately, and each extrapolation reads ten nodes.
+local EXTENDED_ESTIMATE_CACHE_LIMIT = 64
+local extendedEstimateCache = {}
+local extendedEstimateCacheCount = 0
 
-    faction = faction or "all"
-    local population
-    if type(API.GetMetadata) == "function" then
-        local ok, rawMetadata = pcall(API.GetMetadata, API, region)
-        local metadata = ok and Util.SafeTable(rawMetadata) or nil
-        population = metadata and Util.SafeNumber(metadata.population) or nil
-    end
-
+local function BuildExtendedEstimate(API, region, normalizedScore, faction, population)
     local nodes = {}
     local function AddNode(rawNode, key)
         local node = Util.SafeTable(rawNode)
@@ -125,6 +115,11 @@ function Util.EstimateRankBelowTop40(API, region, score, faction)
     if type(API.GetAchievementCutoff) == "function" then
         for _, key in ipairs(EXTENDED_RANK_ACHIEVEMENT_KEYS) do
             local ok, rawAchievement = pcall(API.GetAchievementCutoff, API, region, key, faction)
+            if not ok or rawAchievement == nil then
+                -- Older regional data packs exposed the key without a region
+                -- argument; keep working with them.
+                ok, rawAchievement = pcall(API.GetAchievementCutoff, API, key)
+            end
             if ok then
                 AddNode(rawAchievement, key)
             end
@@ -197,6 +192,48 @@ function Util.EstimateRankBelowTop40(API, region, score, faction)
     end
 
     return nil
+end
+
+function Util.EstimateRankBelowTop40(API, region, score, faction)
+    local normalizedScore = Util.SafeNumber(score)
+    if type(API) ~= "table"
+        or type(API.GetCutoff) ~= "function"
+        or type(region) ~= "string"
+        or not normalizedScore
+    then
+        return nil
+    end
+
+    faction = faction or "all"
+    local metadata
+    local population
+    if type(API.GetMetadata) == "function" then
+        local ok, rawMetadata = pcall(API.GetMetadata, API, region)
+        metadata = ok and Util.SafeTable(rawMetadata) or nil
+        population = metadata and Util.SafeNumber(metadata.population) or nil
+    end
+
+    local cacheKey = table.concat({
+        tostring(API),
+        region,
+        tostring(normalizedScore),
+        faction,
+        metadata and Util.SafeString(metadata.dataVersion) or "",
+        population and tostring(population) or "",
+    }, "|")
+    local cached = extendedEstimateCache[cacheKey]
+    if cached ~= nil then
+        return cached or nil
+    end
+
+    local result = BuildExtendedEstimate(API, region, normalizedScore, faction, population)
+    if extendedEstimateCacheCount >= EXTENDED_ESTIMATE_CACHE_LIMIT then
+        Util.WipeArray(extendedEstimateCache)
+        extendedEstimateCacheCount = 0
+    end
+    extendedEstimateCache[cacheKey] = result or false
+    extendedEstimateCacheCount = extendedEstimateCacheCount + 1
+    return result
 end
 
 function Util.WipeArray(array)

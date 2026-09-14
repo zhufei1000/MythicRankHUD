@@ -1,8 +1,8 @@
 name: Release MythicRankHUD
 
-# 打不带 "v" 前缀的版本号 tag 触发，例如: git tag 1.3.23 && git push origin 1.3.23
+# 打不带 "v" 前缀的版本号 tag 触发，例如: git tag 1.3.30 && git push origin 1.3.30
 # CurseForge 的文件版本号取自 tag 名，保持与 TOC 的 ## Version 一致。
-# Triggered by pushing a plain version tag (no "v" prefix), e.g. 1.3.23.
+# Triggered by pushing a plain version tag (no "v" prefix), e.g. 1.3.30.
 # The CurseForge file version comes from the tag name.
 on:
   push:
@@ -33,16 +33,14 @@ jobs:
         run: |
           sudo apt-get -y update > /dev/null
           sudo apt-get -y install lua5.3 > /dev/null
-          cd MythicRankHUD
           for t in tests/*_test.lua; do
             echo "::group::$t"
             lua5.3 "$t"
             echo "::endgroup::"
           done
 
+      # Packages the repository root as MythicRankHUD (.pkgmeta defines the
+      # ignore list) and uploads to CurseForge (project ID in the TOC) and to
+      # GitHub Releases. QFXMythicRankHUD is not published from this workflow.
       - name: Package and upload
         uses: BigWigsMods/packager@v2
-        with:
-          # Only package the international variant; QFXMythicRankHUD is not
-          # published on CurseForge.
-          args: -t MythicRankHUD

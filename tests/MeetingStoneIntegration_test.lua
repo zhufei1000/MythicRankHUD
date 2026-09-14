@@ -181,7 +181,7 @@ local namespace = {
         VAULT_RAID = "Raid",
         VAULT_MYTHIC_PLUS = "Mythic+",
         VAULT_WORLD = "World",
-        TELEPORT_ANNOUNCEMENT_FORMAT = "Teleported to dungeon: %s----<QFX>",
+        TELEPORT_ANNOUNCEMENT_FORMAT = "Teleported to dungeon: {dungeon}----<QFX>",
     },
     GetHUDVisualSettings = function()
         return hudVisual

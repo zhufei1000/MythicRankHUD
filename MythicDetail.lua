@@ -1,9 +1,12 @@
-local _, ns = ...
+local ADDON_NAME, ns = ...
 local L = ns.L
 local Data = ns.MythicDetailData
 local Resources = ns.MythicDetailResources
 local Util = ns.Util
 local RankTarget = ns.RankTarget
+
+local IS_CN_BUILD = ADDON_NAME == "QFXMythicRankHUD"
+local CLIENT_LOCALE = type(GetLocale) == "function" and GetLocale() or nil
 
 local detailFrame
 local detailRefreshQueued = false
@@ -85,6 +88,12 @@ local function FormatCompactRank(value)
     if type(value) ~= "number" then
         return "-"
     end
+    if CLIENT_LOCALE == "zhCN" or CLIENT_LOCALE == "zhTW" then
+        if value >= 10000 then
+            return string.format("%.1f万", value / 10000)
+        end
+        return FormatInteger(value)
+    end
     if value >= 1000000 then
         return string.format("%.2fM", value / 1000000)
     elseif value >= 1000 then
@@ -96,6 +105,18 @@ end
 local function FormatResourceQuantity(value)
     if type(value) ~= "number" then
         return "-"
+    end
+    if CLIENT_LOCALE == "zhCN" then
+        if value >= 10000 then
+            return string.format("%.1f万", value / 10000)
+        end
+        return FormatInteger(value)
+    end
+    if CLIENT_LOCALE == "zhTW" then
+        if value >= 10000 then
+            return string.format("%.1f萬", value / 10000)
+        end
+        return FormatInteger(value)
     end
     if value >= 1000000 then
         return string.format("%.2fM", value / 1000000)
@@ -478,6 +499,10 @@ local function RefreshDungeonTable()
             row.icon:Hide()
         end
         local englishName, englishShortName = Data.GetEnglishDungeonInfo(mapInfo.mapID)
+        if IS_CN_BUILD then
+            -- The regional build shows the client's localized dungeon names.
+            englishName, englishShortName = nil, nil
+        end
         row.fullDungeonName = englishName or mapInfo.name or ("Dungeon " .. tostring(mapInfo.mapID))
         row.usesShortDungeonName = false
         row.name:SetText(row.fullDungeonName)
@@ -612,6 +637,9 @@ local function RefreshKeystoneUI()
     local value = detailFrame.sideUI.keyValue
     if keystone and keystone.level then
         local englishName, englishShortName = Data.GetEnglishDungeonInfo(keystone.mapID)
+        if IS_CN_BUILD then
+            englishName, englishShortName = nil, nil
+        end
         local displayName = englishName or englishShortName or keystone.name
             or (keystone.mapID and ("Dungeon " .. tostring(keystone.mapID)) or nil)
         value:SetText(displayName

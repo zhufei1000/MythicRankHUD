@@ -13,7 +13,30 @@ local integration = {
 }
 ns.MeetingStoneIntegration = integration
 
-local TEXT = {
+-- The regional build is generated from these same sources; only the addon
+-- folder name and the TOC locale strings differ, so the runtime detects the
+-- variant and keeps the localized board texts next to the code that uses them.
+local IS_CN_BUILD = ADDON_NAME == "QFXMythicRankHUD"
+local IS_ZH_CN = IS_CN_BUILD and type(GetLocale) == "function" and GetLocale() == "zhCN"
+local TEXT = IS_ZH_CN and {
+    combinedTitle = "国服大秘境信息",
+    score = "大秘境分数",
+    weeklyVault = "周常宝库进度",
+    weeklyDetails = "本周大米详情",
+    weeklyDetailsStats = "%s（共%d，限|cff00ff00%d|r，超|cffff4444%d|r）",
+    noScore = "暂无分数",
+    clickDetails = "点击打开大秘境详情",
+    clickTeleport = "点击传送到该副本",
+    teleportLocked = "尚未解锁该副本传送",
+    teleportCombat = "战斗中无法更改传送链接",
+    clickVault = "点击打开周常宝库",
+    rightClickSettings = "右键打开插件设置",
+    dataPackMissing = "缺少国服排名数据库",
+    dataPackInstall = "请安装并启用：%s",
+    dataPackPurpose = "分数、排名与分数线由该插件提供",
+    updateNoticeTitle = "数据库说明",
+    updateNoticeBody = "数据库插件按各区当地时间每天 04:04、16:16 更新，请保持数据库的新鲜",
+} or {
     combinedTitle = "Mythic+ Info",
     score = "Mythic+ Score",
     weeklyVault = "Great Vault Progress",
@@ -32,6 +55,26 @@ local TEXT = {
     updateNoticeTitle = "Database Notice",
     updateNoticeBody = "Database plugins update daily at 04:04 and 16:16 in each region's local time. Keep them current.",
 }
+
+-- The regional build shows the client's Chinese dungeon names; these short
+-- forms keep the season cards narrow.
+local ABBREVIATIONS = IS_CN_BUILD and {
+    [239] = "执政", [556] = "萨隆", [161] = "通天", [402] = "学院",
+    [557] = "风行", [558] = "魔导", [560] = "洞窟", [559] = "节点",
+    [525] = "水闸", [499] = "隐修", [505] = "破晨", [503] = "回响",
+    [542] = "生态", [378] = "赎罪", [392] = "宏图", [391] = "天街",
+    [500] = "鸦巢", [501] = "宝库", [502] = "千丝", [504] = "暗焰",
+    [506] = "酒庄", [249] = "诸王", [250] = "神庙", [584] = "夺目",
+    [585] = "竞技场", [586] = "洞穴", [587] = "密谋", [588] = "毒牙",
+    [244] = "AD", [199] = "BRH", [405] = "BH", [210] = "CoS",
+    [198] = "DHT", [463] = "永恒", [464] = "永恒", [245] = "FH",
+    [507] = "格巴", [406] = "注能", [200] = "英灵", [375] = "仙林",
+    [206] = "巢穴", [404] = "奈堡", [369] = "车间", [370] = "车间",
+    [399] = "红玉", [165] = "影月", [353] = "围攻", [2] = "青龙",
+    [382] = "剧场", [401] = "碧蓝", [168] = "永茂", [247] = "暴富",
+    [376] = "通灵", [400] = "诺库德", [251] = "孢林", [438] = "旋云",
+    [456] = "潮汐", [403] = "奥达", [248] = "庄园",
+} or {}
 
 -- Challenge map ID -> dungeon teleport spell IDs. These are the live 12.1
 -- IDs used by QFXToolBox; multiple entries cover faction/legacy variants.
@@ -270,6 +313,9 @@ local function GetRequiredDataPack()
         local db = ns.GetDB()
         region = type(db) == "table" and db.selectedRegion or nil
     end
+    if not region and IS_CN_BUILD then
+        region = "cn"
+    end
     if not region and type(_G.GetCurrentRegion) == "function" then
         region = CLIENT_REGION_KEYS[SafeNumber(SafeCall(_G.GetCurrentRegion))]
     end
@@ -370,15 +416,26 @@ local function GetMapInfo(mapID)
 end
 
 local function GetMapAbbreviation(mapID)
-    local _, abbreviation = GetInternationalDungeonInfo(mapID)
+    local numericMapID = SafeNumber(mapID)
+    local abbreviation = numericMapID and ABBREVIATIONS[numericMapID] or nil
     if abbreviation then return abbreviation end
-    return tostring(SafeNumber(mapID) or "?")
+    if IS_CN_BUILD then
+        local clientName = GetMapInfo(numericMapID)
+        if type(clientName) == "string" and clientName ~= "" then return clientName end
+    end
+    local _, internationalShortName = GetInternationalDungeonInfo(numericMapID)
+    if internationalShortName then return internationalShortName end
+    return tostring(numericMapID or "?")
 end
 
 local function GetMapDisplayName(mapID)
-    local englishName = GetInternationalDungeonInfo(mapID)
-    if englishName then return englishName end
     local numericMapID = SafeNumber(mapID)
+    if IS_CN_BUILD then
+        local clientName = GetMapInfo(numericMapID)
+        if type(clientName) == "string" and clientName ~= "" then return clientName end
+    end
+    local englishName = GetInternationalDungeonInfo(numericMapID)
+    if englishName then return englishName end
     return numericMapID and ("Dungeon " .. tostring(numericMapID)) or "Dungeon"
 end
 
@@ -462,8 +519,17 @@ local function SendTeleportAnnouncement(unit, castGUID, spellID)
     end
     local destination = GetTeleportDestinationName(mapID)
     if type(destination) ~= "string" or destination == "" then return end
-    local formatText = L.TELEPORT_ANNOUNCEMENT_FORMAT or "Teleported to dungeon: %s"
-    local ok, message = pcall(string.format, formatText, destination)
+    -- Teleport text is an editable {name}-style template; unknown or missing
+    -- placeholders keep their literal form.
+    local template = (ns.GetAnnounceTemplate and ns.GetAnnounceTemplate("TELEPORT_ANNOUNCEMENT_FORMAT"))
+        or L.TELEPORT_ANNOUNCEMENT_FORMAT
+        or "Teleported to dungeon: {dungeon}----<QFX>"
+    local ok, message = pcall(string.gsub, template, "{(%w+)}", function(key)
+        if key == "dungeon" then
+            return destination
+        end
+        return nil
+    end)
     if not ok or type(message) ~= "string" or message == "" then return end
     if type(SendChatMessage) ~= "function" then return end
     local sent = pcall(SendChatMessage, message, "PARTY")
@@ -832,10 +898,26 @@ local function TextureMarkup(texture)
     return string.format("|T%s:14:14:0:0|t", tostring(texture or 134400))
 end
 
-local function GetWeeklyRuns()
+-- The map table is static for the session; re-requesting it on every weekly
+-- draw would only spam the server side request.
+local MAP_INFO_REQUEST_INTERVAL = 10
+local lastMapInfoRequestAt = nil
+
+local function RequestWeeklyMapInfo()
+    local now = GetNow()
+    if now > 0 and lastMapInfoRequestAt and (now - lastMapInfoRequestAt) < MAP_INFO_REQUEST_INTERVAL then
+        return
+    end
+    if now > 0 then
+        lastMapInfoRequestAt = now
+    end
     if C_MythicPlus and type(C_MythicPlus.RequestMapInfo) == "function" then
         SafeCall(C_MythicPlus.RequestMapInfo)
     end
+end
+
+local function GetWeeklyRuns()
+    RequestWeeklyMapInfo()
     local runs = C_MythicPlus and SafeCall(C_MythicPlus.GetRunHistory, false, true, true)
     return type(runs) == "table" and runs or {}
 end

@@ -1,0 +1,13 @@
+# Build configuration for BigWigsMods/packager (used by the release workflow).
+# The international addon lives in the repository root; the regional variant is
+# composed from the same Lua sources by tools/build_release.ps1.
+package-as: MythicRankHUD
+ignore:
+  - .agents
+  - .codex
+  - .github
+  - .gitignore
+  - .workbuddy
+  - releases
+  - tests
+  - tools
