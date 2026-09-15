@@ -13,7 +13,7 @@ World of Warcraft (Midnight) Mythic+ rank HUD. Estimates regional M+ rank and pr
 | 仓库根目录（`MythicRankHUD.toc`） | 国际版（英文界面） | `/myrank` |
 | `releases/QFXMythicRankHUD/`（叠加层） | 中文版（zhCN / zhTW / enUS 本地化） | `/qfxrank` |
 
-当前版本 / Current version: **1.3.30**。
+当前版本 / Current version: **1.4.0**。
 
 ## 安装 / Install
 
@@ -57,6 +57,7 @@ git push origin 1.3.30
 
 ## 更新日志 / Changelog
 
+- **1.4.0** — 赛季条副本卡片改为按分数从高到低排列（同分按钥石层数，再按固定顺序）。新增 EllesmereUI 皮肤支持：安装 EllesmereUI 且启用第三方皮肤时，HUD 面板与详细窗口自动套用其主题（窗口外观、关闭按钮、下拉框，标题与进度条跟随强调色实时同步）；未安装或关闭皮肤时保持原外观，插件自身的外观滑块仅在该模式下生效。
 - **1.3.30** — 传送完成喊话默认关闭（新安装；老用户已有设置不受影响）；接入 tag 触发的自动发布流程。
 - **1.3.23–1.3.29** — 副本结束与队友进队播报、设置界面分区与文案自定义、双变体统一源码。
 - **1.3.22** — 修复晦暗虚空核心数量显示错误：正式服可收集货币沿用 ID 3418（3511/3513 为客户端数据中的未使用重复条目）。

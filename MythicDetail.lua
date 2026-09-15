@@ -441,11 +441,25 @@ local function ApplyVisualSettings()
     local borderB = visual and visual.borderB or 0.18
     local borderAlpha = visual and visual.borderAlpha or 1.00
     local backgroundAlpha = visual and visual.backgroundAlpha or 0.90
+    local euiActive = ns.IsEUISkinActive and ns.IsEUISkinActive()
     detailFrame.detailBackgroundAlpha = backgroundAlpha
-    detailFrame:SetBackdropColor(0.035, 0.035, 0.045, backgroundAlpha)
-    detailFrame:SetBackdropBorderColor(borderR, borderG, borderB, borderAlpha)
+    if euiActive then
+        -- EllesmereUI owns the window chrome: the title and the progress bar
+        -- follow its live accent / bar-fill colors instead of the sliders.
+        local S = ns.GetEUISkin and ns.GetEUISkin()
+        if S and S.GetAccentColor then
+            local accentR, accentG, accentB = S.GetAccentColor()
+            if accentR then borderR, borderG, borderB = accentR, accentG, accentB end
+        end
+        if ns.ApplyEUISkinBarFill then
+            ns.ApplyEUISkinBarFill(detailFrame.progress)
+        end
+    else
+        detailFrame:SetBackdropColor(0.035, 0.035, 0.045, backgroundAlpha)
+        detailFrame:SetBackdropBorderColor(borderR, borderG, borderB, borderAlpha)
+        detailFrame.progress:SetStatusBarColor(borderR, borderG, borderB, 0.9)
+    end
     detailFrame.title:SetTextColor(borderR, borderG, borderB)
-    detailFrame.progress:SetStatusBarColor(borderR, borderG, borderB, 0.9)
 
     for _, background in ipairs(detailFrame.backgroundLayers) do
         background.texture:SetColorTexture(1, 1, 1, backgroundAlpha * background.multiplier)
@@ -465,6 +479,19 @@ local function ApplyVisualSettings()
         )
         RefreshCutoffTrendUI()
     end
+end
+
+if ns.RegisterEUISkinLooks then
+    -- Accent / bar-fill edits inside EllesmereUI re-tint the title and the
+    -- progress bar live.
+    ns.RegisterEUISkinLooks(function()
+        if detailFrame then ApplyVisualSettings() end
+    end)
+end
+if ns.RegisterEUISkinReady then
+    ns.RegisterEUISkinReady(function()
+        if detailFrame then ApplyVisualSettings() end
+    end)
 end
 
 local function EnsureMapRows(count)
@@ -1525,6 +1552,7 @@ local function CreateDetailFrame()
         edgeFile = "Interface\\Buttons\\WHITE8X8",
         edgeSize = 1,
     })
+    if ns.RegisterEUISkin then ns.RegisterEUISkin(frame, "shell") end
     frame.backgroundLayers = {}
 
     local titleBar = CreateFrame("Frame", nil, frame)
@@ -1553,6 +1581,7 @@ local function CreateDetailFrame()
     close:SetScript("OnClick", function()
         frame:Hide()
     end)
+    if ns.RegisterEUISkin then ns.RegisterEUISkin(close, "close") end
 
     local dataSection = CreateFrame("Frame", nil, frame)
     dataSection:SetPoint("TOPLEFT", frame, "TOPLEFT", 20, -50)
@@ -1663,6 +1692,9 @@ local function CreateDetailFrame()
     frame.tableUI.empty:SetTextColor(MUTED_R, MUTED_G, MUTED_B)
     frame.tableUI.summary = CreateStatRow(frame.tablePanel, 0, true)
     frame.tableUI.regionSelector = CreateRegionSelector(frame.tablePanel)
+    if ns.RegisterEUISkin and frame.tableUI.regionSelector.dropdown then
+        ns.RegisterEUISkin(frame.tableUI.regionSelector.dropdown, "dropdown")
+    end
 
     frame.sidePanel = CreateFrame("Frame", nil, frame)
     frame.sidePanel:SetPoint(
@@ -1699,6 +1731,7 @@ local function CreateDetailFrame()
     side.trendTitle = CreateModuleTitle(frame.sidePanel, L.DETAIL_CUTOFF_TRENDS)
     side.trendTitle:SetWidth(SIDE_WIDTH - 68)
     side.trendPeriodDropdown = CreateTrendPeriodDropdown(frame.sidePanel)
+    if ns.RegisterEUISkin then ns.RegisterEUISkin(side.trendPeriodDropdown, "dropdown") end
     side.trendButtonBar, side.trendButtons = CreateTrendButtonBar(frame.sidePanel)
     side.trendSummary = CreateFrame("Frame", nil, frame.sidePanel)
     side.trendSummary:SetSize(SIDE_WIDTH, 22)

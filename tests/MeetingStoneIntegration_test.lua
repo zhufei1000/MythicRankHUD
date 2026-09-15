@@ -113,6 +113,8 @@ C_AddOns = {
     GetAddOnEnableState = function(name) return enabledAddons[name] and 2 or 0 end,
 }
 
+-- Optional per-map score/level overrides for the season-card ordering test.
+local mapScoreOverrides
 C_ChallengeMode = {
     GetMapTable = function() return { 249, 250, 399, 584, 585, 586, 587, 588 } end,
     GetMapUIInfo = function(mapID) return "Localized Dungeon " .. mapID, nil, 1800, 100000 + mapID end,
@@ -120,7 +122,12 @@ C_ChallengeMode = {
         mapScoreRefreshCount = (mapScoreRefreshCount or 0) + 1
         local result = {}
         for _, mapID in ipairs(C_ChallengeMode.GetMapTable()) do
-            result[#result + 1] = { mapChallengeModeID = mapID, level = 12, dungeonScore = 375 }
+            local override = mapScoreOverrides and mapScoreOverrides[mapID]
+            result[#result + 1] = {
+                mapChallengeModeID = mapID,
+                level = override and override.level or 12,
+                dungeonScore = override and override.score or 375,
+            }
         end
         return result
     end,
@@ -174,6 +181,10 @@ local hudVisual = {
     borderAlpha = 0.9,
     backgroundAlpha = 0.9,
 }
+-- EllesmereUI skin bridge stub: records what the integration hands over and
+-- lets the test turn the skin on and off.
+local euiSkinActive = false
+local euiSkinEntries = {}
 local namespace = {
     Util = { SafeNumber = tonumber },
     L = {
@@ -211,6 +222,10 @@ local namespace = {
     OpenMythicDetail = function() toggled = true end,
     GetSelectedRegion = function() return selectedRegion end,
     IsRegionLoaded = function(region) return dataPackLoaded and loadedRegions[region] == true end,
+    IsEUISkinActive = function() return euiSkinActive end,
+    RegisterEUISkin = function(frame, kind)
+        euiSkinEntries[#euiSkinEntries + 1] = { frame = frame, kind = kind }
+    end,
     GetFallbackEnglishDungeonInfo = function(mapID)
         if tonumber(mapID) == 249 then return "Kings' Rest", "KR" end
     end,
@@ -638,6 +653,83 @@ do
     enabledAddons.MeetingStone = false
     MeetingStoneMainPanel.shown = false
     seasonBar.SetShown = originalSetShown
+end
+
+-- EllesmereUI skin delegation: while the skin is active every HUD frame is
+-- handed to EUI and the addon backdrop is left untouched; turning the skin off
+-- restores the addon backdrop path.
+do
+    local function CountEntries(kind, frame)
+        local count = 0
+        for _, entry in ipairs(euiSkinEntries) do
+            if entry.kind == kind and (not frame or entry.frame == frame) then
+                count = count + 1
+            end
+        end
+        return count
+    end
+
+    assert(CountEntries("close", integration.updateNotice.closeButton) >= 1,
+        "the database notice close button was not handed to the EUI skin")
+
+    enabledAddons.MeetingStone = true
+    MeetingStoneMainPanel.shown = true
+    MeetingStoneMainPanel.scripts.OnShow(MeetingStoneMainPanel)
+
+    local seasonBarBackdrop = integration.seasonBar.backdropColor
+    local sidePanelBackdrop = integration.sidePanel.backdropColor
+    local noticeBackdrop = integration.updateNotice.backdropColor
+
+    euiSkinActive = true
+    namespace.RefreshMeetingStoneIntegration("style")
+
+    assert(integration.seasonBar.backdropColor == seasonBarBackdrop,
+        "the season bar painted the addon backdrop while the EUI skin is active")
+    assert(integration.sidePanel.backdropColor == sidePanelBackdrop,
+        "the side panel painted the addon backdrop while the EUI skin is active")
+    assert(integration.updateNotice.backdropColor == noticeBackdrop,
+        "the update notice painted the addon backdrop while the EUI skin is active")
+    assert(CountEntries("panel", integration.seasonBar) >= 1, "the season bar was not handed to the EUI skin")
+    assert(CountEntries("panel", integration.sidePanel) >= 1, "the side panel was not handed to the EUI skin")
+    assert(CountEntries("panel", integration.updateNotice) >= 1, "the update notice was not handed to the EUI skin")
+
+    euiSkinActive = false
+    namespace.RefreshMeetingStoneIntegration("style")
+    assert(integration.seasonBar.backdropColor ~= seasonBarBackdrop,
+        "the season bar did not return to the addon backdrop after the skin was turned off")
+end
+
+-- Season bar ordering: dungeons are laid out by score (highest first), equal
+-- scores by key level, and fully-equal scores keep the fixed map-table order.
+do
+    mapScoreOverrides = {
+        [249] = { level = 10, score = 100 },
+        [250] = { level = 12, score = 375 },
+        [399] = { level = 12, score = 500 },
+        [584] = { level = 11, score = 200 },
+        [585] = { level = 13, score = 500 },
+        [586] = { level = 12, score = 300 },
+        [587] = { level = 12, score = 250 },
+        [588] = { level = 12, score = 150 },
+    }
+    enabledAddons.MeetingStone = true
+    MeetingStoneMainPanel.shown = true
+    MeetingStoneMainPanel.scripts.OnShow(MeetingStoneMainPanel)
+    namespace.RefreshMeetingStoneIntegration("full")
+
+    local expectedOrder = { 585, 399, 250, 586, 587, 584, 588, 249 }
+    for index, mapID in ipairs(expectedOrder) do
+        assert(integration.cards[index].mapID == mapID,
+            "season card " .. index .. " was not ordered by score (got map " .. tostring(integration.cards[index].mapID) .. ")")
+    end
+
+    mapScoreOverrides = nil
+    namespace.RefreshMeetingStoneIntegration("full")
+    local fixedOrder = { 249, 250, 399, 584, 585, 586, 587, 588 }
+    for index, mapID in ipairs(fixedOrder) do
+        assert(integration.cards[index].mapID == mapID,
+            "equal-score dungeons did not keep the map-table order at card " .. index)
+    end
 end
 
 print("MeetingStoneIntegration_test: OK")

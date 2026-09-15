@@ -597,6 +597,15 @@ end
 
 local function ApplyBackdrop(frame, alpha)
     if not frame then return end
+    if ns.RegisterEUISkin then
+        -- Hand the frame to the EllesmereUI skin (queued until its facade is
+        -- ready). While EUI paints the panel and border, the addon's own
+        -- backdrop colors stay out of the way.
+        ns.RegisterEUISkin(frame, "panel")
+        if ns.IsEUISkinActive and ns.IsEUISkinActive() then
+            return
+        end
+    end
     local visual = ns.GetHUDVisualSettings and ns.GetHUDVisualSettings() or {}
     frame:SetBackdrop({
         bgFile = "Interface\\Buttons\\WHITE8X8",
@@ -842,6 +851,29 @@ local function UpdateTeleportBindings()
     end
 end
 
+-- Season bar cards read as a ranking: ordered by dungeon score (highest
+-- first). Equal scores fall back to the key level and then to the fixed
+-- map-table order, so the pre-data / all-equal layout stays stable.
+local function BuildSeasonCardOrder(maps, rating)
+    local order = {}
+    for index = 1, math.min(#maps, 8) do
+        local mapID = SafeNumber(maps[index])
+        local best = mapID and rating[mapID] or nil
+        order[#order + 1] = {
+            mapID = mapID,
+            level = SafeNumber(best and best.level, 0) or 0,
+            score = SafeNumber(best and best.score, 0) or 0,
+            mapOrder = index,
+        }
+    end
+    table.sort(order, function(left, right)
+        if left.score ~= right.score then return left.score > right.score end
+        if left.level ~= right.level then return left.level > right.level end
+        return left.mapOrder < right.mapOrder
+    end)
+    return order
+end
+
 local function UpdateSeasonBar(refreshResources)
     local frame = integration.seasonBar
     if not frame or not frame:IsShown() then return end
@@ -851,7 +883,8 @@ local function UpdateSeasonBar(refreshResources)
 
     local maps = GetSeasonMapIDs()
     local rating = GetRatingLookup()
-    local count = math.min(#maps, 8)
+    local order = BuildSeasonCardOrder(maps, rating)
+    local count = #order
     integration.visibleCardCount = count
     for index = 1, 8 do
         local card = integration.cards[index]
@@ -860,11 +893,11 @@ local function UpdateSeasonBar(refreshResources)
                 card = CreateSeasonCard(frame)
                 integration.cards[index] = card
             end
-            local mapID = SafeNumber(maps[index])
+            local entry = order[index]
+            local mapID = entry.mapID
             local _, texture = GetMapInfo(mapID)
-            local best = rating[mapID] or {}
-            local level = SafeNumber(best.level, 0) or 0
-            local score = SafeNumber(best.score, 0) or 0
+            local level = entry.level
+            local score = entry.score
             card.mapID = mapID
             card.mapName = GetMapDisplayName(mapID)
             card.bestLevel = level
@@ -1307,6 +1340,7 @@ local function CreateUpdateNotice()
         integration.updateNoticeDismissed = true
         notice:Hide()
     end)
+    if ns.RegisterEUISkin then ns.RegisterEUISkin(notice.closeButton, "close") end
 
     notice:Hide()
     integration.updateNotice = notice

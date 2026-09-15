@@ -84,8 +84,6 @@ local namespace = {
         RUN_GAIN_LINE_AD = "[MythicRankHUD-{date}]",
         RUN_REGION_LABEL_CN = "CN",
         PACK_DATE_SEPARATOR = ".",
-        WELCOME_TEAMMATE_FORMAT = "{name} | M+ score: <{score}> | {region} rank <~{rank}>",
-        WELCOME_CLOSING_FORMAT = "Glad to run with you all, good luck!! MythicRankHUD-{date}",
     },
     Util = { SafeNumber = SafeNumber, SafeTable = SafeTable },
     GetSelectedRegion = function() return "cn" end,

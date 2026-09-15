@@ -14,7 +14,7 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem
 $root = Split-Path -Parent $PSScriptRoot
 $overlay = Join-Path $root "releases/QFXMythicRankHUD"
 $files = @(
-    "Core.lua", "Locale.lua", "MeetingStoneIntegration.lua", "MythicDetail.lua",
+    "Core.lua", "EUI.lua", "Locale.lua", "MeetingStoneIntegration.lua", "MythicDetail.lua",
     "MythicDetailData.lua", "MythicDetailResources.lua", "MythicDetailStatistics.lua",
     "RankTarget.lua", "Region.lua", "RunSummary.lua", "Settings.lua", "Util.lua"
 )
