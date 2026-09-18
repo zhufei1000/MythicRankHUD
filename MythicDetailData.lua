@@ -196,6 +196,8 @@ local function BuildRanking(score)
     ranking.rankMax = SafeNumber(result.rankMax)
     ranking.percentileMin = SafeNumber(result.percentileMin)
     ranking.percentileMax = SafeNumber(result.percentileMax)
+    ranking.isRoundedLeaderboardRank = result.isRoundedLeaderboardRank == true
+    ranking.isRoundedTie = result.isRoundedTie == true
     local extendedEstimate
     if not ranking.estimatedRank then
         extendedEstimate = Util.EstimateRankBelowTop40(API, region, score, "all")
@@ -216,7 +218,7 @@ local function BuildRanking(score)
     ranking.smartTarget = RankTarget.Resolve(score, smartCutoffs, BuildAchievementTargets(API, region))
 
     local topTarget = cutoffByKey.p999
-    ranking.inTop01 = score >= topTarget.score
+    ranking.inTop01 = ranking.isRoundedLeaderboardRank or score >= topTarget.score
     if ranking.inTop01 then
         ranking.bracketKind = "top"
         ranking.topRankMax = ranking.rankMax or SafeNumber(topTarget.value.rank)

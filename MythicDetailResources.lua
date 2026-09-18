@@ -182,5 +182,3 @@ function Resources.ShowTooltip(owner, resource)
 end
 
 Resources.RESOURCE_ORDER = RESOURCE_ORDER
-Resources.RESOURCE_DEFINITIONS = RESOURCE_DEFINITIONS
-Resources.IsAccessibleValue = IsAccessibleValue

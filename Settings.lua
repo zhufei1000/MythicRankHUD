@@ -31,8 +31,7 @@ local function GetAddOnVersion()
     return ok and version or "Unknown"
 end
 
-local function PrintDebugInfo()
-    print(L.ADDON_TITLE)
+local function PrintDebugInfo()    print(L.ADDON_TITLE)
     print("Addon name: " .. tostring(ADDON_NAME))
     print("TOC version: " .. tostring(GetAddOnVersion()))
     print("Client locale: " .. tostring(type(GetLocale) == "function" and GetLocale() or "Unknown"))
@@ -459,8 +458,17 @@ local function CreateSettingsPanel()
         box:SetSize(520, 26)
         box:SetPoint("TOPLEFT", content, "TOPLEFT", 44, rowY)
         box:SetAutoFocus(false)
+        -- Persist the box as an override only when it actually differs from the
+        -- built-in text; an unedited box must not pin the current default.
+        local function CommitTemplateBox(self)
+            local text = self:GetText()
+            if text == (L[fieldKey] or "") then
+                text = ""
+            end
+            ns.SetAnnounceTemplate(fieldKey, text)
+        end
         box:SetScript("OnEnterPressed", function(self)
-            ns.SetAnnounceTemplate(fieldKey, self:GetText())
+            CommitTemplateBox(self)
             self:SetText(ns.GetAnnounceTemplate(fieldKey) or L[fieldKey] or "")
             self:ClearFocus()
         end)
@@ -469,7 +477,7 @@ local function CreateSettingsPanel()
             self:ClearFocus()
         end)
         box:SetScript("OnEditFocusLost", function(self)
-            ns.SetAnnounceTemplate(fieldKey, self:GetText())
+            CommitTemplateBox(self)
         end)
         templateBoxes[fieldKey] = box
         rowY = rowY - 36
@@ -492,10 +500,7 @@ local function CreateSettingsPanel()
     })
 
     AddAnnouncement("SETTINGS_ANNOUNCE_RUN_GAIN", "announceRunGain", "SetRunGainAnnouncementEnabled", {
-        { key = "RUN_GAIN_LINE_GAIN", label = "SETTINGS_TEXT_RUN_LINE_GAIN" },
-        { key = "RUN_GAIN_LINE_NO_GAIN", label = "SETTINGS_TEXT_RUN_LINE_NO_GAIN" },
-        { key = "RUN_GAIN_LINE_TODAY", label = "SETTINGS_TEXT_RUN_LINE_TODAY" },
-        { key = "RUN_GAIN_LINE_CURRENT", label = "SETTINGS_TEXT_RUN_LINE_CURRENT" },
+        { key = "RUN_MEMBER_LINE", label = "SETTINGS_TEXT_RUN_MEMBER_LINE" },
         { key = "RUN_GAIN_LINE_AD", label = "SETTINGS_TEXT_RUN_LINE_AD" },
     })
 

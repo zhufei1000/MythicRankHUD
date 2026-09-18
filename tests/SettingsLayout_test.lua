@@ -179,7 +179,7 @@ for _, item in ipairs(scripts) do
     end
 end
 assert(switches == 3, "expected 3 announcement switches, found " .. switches)
-assert(boxes == 8, "expected 8 template boxes, found " .. boxes)
+assert(boxes == 5, "expected 5 template boxes, found " .. boxes)
 assert(hintY and resetY, "hint or reset button was not placed")
 
 -- Radio options must carry visible labels even when the client's radio

@@ -1,10 +1,10 @@
 local _, ns = ...
 local L = ns.L
 local Util = ns.Util
+local RankTarget = ns.RankTarget
 
--- Post-run summary: after a Mythic+ run completes, compare the player's
--- overall score before/after the run and announce the score gain plus the
--- estimated rank improvement (this run only, not the daily delta) in party.
+-- Post-run summary: snapshot party members at the key start and announce
+-- each teammate's score and estimated rank changes after completion.
 -- Dungeon entry welcome: when the party loads into a dungeon, wait until
 -- every member's Mythic+ score is readable, then announce one line per
 -- teammate followed by a closing greeting - while the group is still
@@ -16,7 +16,8 @@ local Util = ns.Util
 
 local run = {
     active = false,
-    scoreBefore = nil,
+    members = {},
+    generation = 0,
 }
 
 local function ReadPlayerScore()
@@ -59,6 +60,101 @@ local function FormatScoreValue(value)
         return tostring(math.floor(rounded))
     end
     return string.format("%.1f", rounded)
+end
+
+-- Ranked achievement cutoffs that can act as a "next target" when the score
+-- has not yet reached a percentile cutoff.
+local ACHIEVEMENT_TARGET_KEYS = {
+    { key = "keystoneExplorer", nameKey = "ACHIEVEMENT_KEYSTONE_EXPLORER" },
+    { key = "keystoneConqueror", nameKey = "ACHIEVEMENT_KEYSTONE_CONQUEROR" },
+    { key = "keystoneMaster", nameKey = "ACHIEVEMENT_KEYSTONE_MASTER" },
+    { key = "keystoneHero", nameKey = "ACHIEVEMENT_KEYSTONE_HERO" },
+    { key = "keystoneLegend", nameKey = "ACHIEVEMENT_KEYSTONE_LEGEND" },
+}
+
+-- Reads the selected region's percentile cutoffs and achievement cutoffs once
+-- per announcement; the resolved target per member is pure math on top.
+local function BuildRankTargetContext(region)
+    if not RankTarget or type(RankTarget.Resolve) ~= "function" or type(region) ~= "string" then
+        return nil
+    end
+    local API = _G.QFXMythicRankData
+    if type(API) ~= "table" or type(API.GetCutoff) ~= "function" then
+        return nil
+    end
+
+    local cutoffs = {}
+    for _, definition in ipairs(RankTarget.CUTOFF_DEFS) do
+        local ok, raw = pcall(API.GetCutoff, API, region, definition.key, "all")
+        local value = ok and Util.SafeTable(raw) or nil
+        local score = value and Util.SafeNumber(value.score) or nil
+        if score then
+            cutoffs[#cutoffs + 1] = {
+                key = definition.key,
+                percent = definition.percent,
+                score = score,
+                color = value and Util.SafeString(value.color) or nil,
+            }
+        end
+    end
+    if #cutoffs == 0 then
+        return nil
+    end
+
+    local achievements = {}
+    if type(API.GetAchievementCutoff) == "function" then
+        for _, definition in ipairs(ACHIEVEMENT_TARGET_KEYS) do
+            local ok, raw = pcall(API.GetAchievementCutoff, API, region, definition.key)
+            if not ok or raw == nil then
+                ok, raw = pcall(API.GetAchievementCutoff, API, definition.key)
+            end
+            local value = ok and Util.SafeTable(raw) or nil
+            local threshold = value and Util.SafeNumber(value.thresholdScore or value.score)
+                or (ok and Util.SafeNumber(raw)) or nil
+            if threshold then
+                achievements[#achievements + 1] = {
+                    key = definition.key,
+                    thresholdScore = threshold,
+                    localizedName = L[definition.nameKey],
+                    color = value and Util.SafeString(value.color) or nil,
+                }
+            end
+        end
+    end
+    return cutoffs, achievements
+end
+
+local function GetRankTargetName(target)
+    if target.targetKind == "bracket" then
+        return string.format(L.TOP_PERCENT or "top %s%%", target.targetPercent or "?")
+    end
+    if target.targetKind == "cutoff" then
+        return string.format(L.SMART_CUTOFF_LINE_FORMAT or "Top %s%% cutoff", target.targetPercent or "?")
+    end
+    return target.targetName
+end
+
+-- Next percentile cutoff or achievement the score still has to reach.
+-- Returns the target name, the plain point distance and the full phrase
+-- ("距前10%差123分"); all three are nil when no target can be computed.
+local function BuildNextTargetValues(score, cutoffs, achievements)
+    if not score or not cutoffs then
+        return nil, nil, nil
+    end
+    local target = RankTarget.Resolve(score, cutoffs, achievements)
+    if not target then
+        return nil, nil, nil
+    end
+    if target.mode == "complete" then
+        return nil, nil, L.RUN_NEXT_TARGET_COMPLETE or ""
+    end
+    local targetName = GetRankTargetName(target)
+    if not targetName then
+        return nil, nil, nil
+    end
+    local distanceText = FormatScoreValue(target.distance or 0)
+    local format = L.RUN_NEXT_TARGET_FORMAT or "%s pts to %s"
+    return targetName, distanceText, string.format(format, targetName, distanceText)
 end
 
 local function FormatRankValue(value)
@@ -269,151 +365,27 @@ local function GetUpdateTimeText(region)
     return string.format("%02d-%02d %02d:%02d", month, day, hour, minute)
 end
 
--- Announcement lines are sent this far apart: a burst of separate sentences
--- would otherwise hit the client's chat rate limit.
-local ANNOUNCE_LINE_INTERVAL = 1
+ -- Announcement lines are sent this far apart: a burst of separate sentences
+ -- would otherwise hit the client's chat rate limit.
+local ANNOUNCE_LINE_INTERVAL = 0.5
 
 -- Queues one chat message at `delay` seconds from now. Queued lines are
 -- dropped once the run has started, so a key inserted mid-burst never gets
 -- interrupted by ads.
-local function QueueChatMessage(message, delay)
+local function QueueChatMessage(message, delay, generation)
     if delay > 0 and C_Timer and type(C_Timer.After) == "function" then
         C_Timer.After(delay, function()
-            if run.active then
+            if run.active or run.generation ~= generation then
                 return
             end
-            if type(SendChatMessage) == "function" then
-                pcall(SendChatMessage, message, "PARTY")
-            end
+            Util.SendPartyMessage(message)
         end)
-    elseif type(SendChatMessage) == "function" and not run.active then
-        pcall(SendChatMessage, message, "PARTY")
+    elseif not run.active and run.generation == generation then
+        Util.SendPartyMessage(message)
     end
 end
 
--- Builds the post-run summary as separate lines, sent one second apart:
---   1. this run's gain (or the no-gain wording)
---   2. today's gain          (only when the daily baseline is known)
---   3. current score + rank
---   4. the footer line carrying the data pack date and update time
--- A run always reports at least lines 1, 3 and 4.
-local function BuildRunGainMessages(region, regionLabel, rankAfter, scoreGain, rankGain, scoreAfter)
-    local baseline
-    if type(ns.GetDailyBaselineScore) == "function" then
-        baseline = ns.GetDailyBaselineScore()
-    end
-    local todayRankGain
-    if baseline then
-        local todayRankBefore = EstimateRankForScore(region, baseline)
-        if todayRankBefore then
-            todayRankGain = math.max(0, math.floor(todayRankBefore - rankAfter + 0.5))
-        end
-    end
-
-    local values = {
-        region = regionLabel,
-        rank = FormatRankValue(rankAfter),
-        score = FormatScoreValue(scoreGain),
-        rankGain = FormatRankValue(rankGain),
-        currentScore = FormatScoreValue(scoreAfter),
-        todayScore = FormatScoreValue(baseline and math.max(0, scoreAfter - baseline) or 0),
-        todayRank = FormatRankValue(todayRankGain or 0),
-        date = GetPackDateText(region) or "",
-        updateTime = GetUpdateTimeText(region) or "",
-    }
-
-    local messages = {}
-    local function Add(key)
-        local line = ExpandTemplate(GetAnnounceTemplate(key), values)
-        if line then
-            messages[#messages + 1] = line
-        end
-        return line
-    end
-
-    -- Zero-gain runs get their own wording instead of "improved by 0".
-    Add(scoreGain > 0 and "RUN_GAIN_LINE_GAIN" or "RUN_GAIN_LINE_NO_GAIN")
-    if todayRankGain then
-        Add("RUN_GAIN_LINE_TODAY")
-    end
-    Add("RUN_GAIN_LINE_CURRENT")
-    -- Footer carries the pack date, so no separate update-time suffix is
-    -- appended: that would repeat the same date the footer already shows.
-    Add("RUN_GAIN_LINE_AD")
-    return messages
-end
-
-local function AnnounceRunGain(scoreBefore, scoreAfter)
-    if type(ns.IsRunGainAnnouncementEnabled) == "function"
-        and not ns.IsRunGainAnnouncementEnabled()
-    then
-        return
-    end
-    if type(IsInGroup) == "function" then
-        local ok, grouped = pcall(IsInGroup, LE_PARTY_CATEGORY_HOME or 1)
-        if not ok or not grouped then
-            return
-        end
-    end
-    local region = ns.GetSelectedRegion()
-    local regionLabel = GetRegionLabel()
-    if not region or not regionLabel then
-        return
-    end
-    local rankBefore = EstimateRankForScore(region, scoreBefore)
-    local rankAfter = EstimateRankForScore(region, scoreAfter)
-    if not rankBefore or not rankAfter then
-        return
-    end
-    local scoreGain = math.max(0, scoreAfter - scoreBefore)
-    local rankGain = math.max(0, math.floor(rankBefore - rankAfter + 0.5))
-    local messages = BuildRunGainMessages(region, regionLabel, rankAfter, scoreGain, rankGain, scoreAfter)
-    if #messages == 0 then
-        return
-    end
-    for index, message in ipairs(messages) do
-        QueueChatMessage(message, index * ANNOUNCE_LINE_INTERVAL)
-    end
-end
-
-local function SchedulePostRunCheck()
-    if not run.active then
-        return
-    end
-    local scoreBefore = run.scoreBefore
-    run.active = false
-    if not scoreBefore then
-        return
-    end
-
-    -- Announcement waits for the configured delay after the run ends, then
-    -- briefly polls for Blizzard's score refresh before sending. The run is
-    -- always announced, even when the score did not improve (gain of 0).
-    local attempts = 0
-    local function CheckScoreUpdated()
-        local scoreAfter = ReadPlayerScore()
-        if scoreAfter and scoreAfter > scoreBefore + 0.05 then
-            AnnounceRunGain(scoreBefore, scoreAfter)
-            return
-        end
-        attempts = attempts + 1
-        if attempts < 4 and C_Timer and type(C_Timer.After) == "function" then
-            C_Timer.After(2, CheckScoreUpdated)
-            return
-        end
-        -- Score never refreshed (or genuinely did not improve): announce with
-        -- whatever is readable so every finished run gets its summary.
-        local finalScore = scoreAfter or ReadPlayerScore() or scoreBefore
-        AnnounceRunGain(scoreBefore, finalScore)
-    end
-
-    local delay = GetRunAnnounceDelay()
-    if delay > 0 and C_Timer and type(C_Timer.After) == "function" then
-        C_Timer.After(delay, CheckScoreUpdated)
-    else
-        CheckScoreUpdated()
-    end
-end
+local SchedulePostRunCheck
 
 
 -- ---------------------------------------------------------------------------
@@ -433,6 +405,22 @@ local ENCOUNTER_PRUNE_INTERVAL = 60 * 60
 local welcomeState = {
     known = {}, -- [guid] = true, current party roster
 }
+
+-- One shared slow-poll queue for every member still waiting for a readable
+-- score: a single timer serves all pending welcomes instead of one chain per
+-- teammate.
+local pendingWelcomes = {}
+local welcomePollScheduled = false
+
+local function ClearPendingWelcomes()
+    for guid in pairs(pendingWelcomes) do
+        pendingWelcomes[guid] = nil
+    end
+end
+
+-- Last outcome of the welcome pipeline, surfaced by /qfxrank debug so a
+-- missing greeting can be diagnosed in-game.
+local lastWelcomeIssue = "none"
 
 -- Poll chains capture the current generation and stop as soon as the run
 -- starts (the key was inserted); the counter is bumped on CHALLENGE_MODE_START.
@@ -593,10 +581,12 @@ local function GetUnitGUID(unit)
         return nil
     end
     local ok, guid = pcall(UnitGUID, unit)
-    if ok and type(guid) == "string" then
-        return guid
+    if not ok then
+        return nil
     end
-    return nil
+    -- 12.x marks UnitGUID secret under unit-identity restrictions; a secret
+    -- GUID must never become a table key.
+    return Util.SafeString(guid)
 end
 
 -- Roster reshuffles move members between party slots; locate the member's
@@ -613,14 +603,16 @@ end
 local function GetUnitDisplayName(unit)
     if type(GetUnitName) == "function" then
         local ok, name = pcall(GetUnitName, unit, true)
-        if ok and type(name) == "string" and name ~= "" then
-            return name
+        local safeName = ok and Util.SafeString(name) or nil
+        if safeName and safeName ~= "" then
+            return safeName
         end
     end
     if type(UnitName) == "function" then
         local ok, name = pcall(UnitName, unit)
-        if ok and type(name) == "string" and name ~= "" then
-            return name
+        local safeName = ok and Util.SafeString(name) or nil
+        if safeName and safeName ~= "" then
+            return safeName
         end
     end
     return nil
@@ -631,8 +623,9 @@ local function GetUnitRealm(unit)
         return nil
     end
     local ok, _, realm = pcall(UnitFullName, unit)
-    if ok and type(realm) == "string" and realm ~= "" then
-        return realm
+    local safeRealm = ok and Util.SafeString(realm) or nil
+    if safeRealm and safeRealm ~= "" then
+        return safeRealm
     end
     return nil
 end
@@ -647,18 +640,203 @@ local function ReadUnitMythicPlusScore(unit)
     return nil
 end
 
+-- ---------------------------------------------------------------------------
+-- Applicant score cache: while the player is listed in the Group Finder, the
+-- applicant list exposes each applicant's Mythic+ score (the same value the
+-- default applicant tooltip shows). Members who join from that list can be
+-- greeted with the cached score even when the unit rating API has no data for
+-- them. Only the welcome path uses this cache; run summaries keep reading the
+-- live unit value so a stale applicant score can never leak into a run report.
+-- ---------------------------------------------------------------------------
+
+local APPLICANT_CACHE_TTL = 30 * 60
+local applicantScores = {} -- [lowercase short name] = { score = number, at = wall clock }
+
+local function NormalizeShortName(name)
+    local value = Util.SafeString(name)
+    if not value or value == "" then
+        return nil
+    end
+    local short = value:match("^([^%-]+)") or value
+    return string.lower(short)
+end
+
+local function CacheApplicantScores()
+    if type(C_LFGList) ~= "table"
+        or type(C_LFGList.GetApplicants) ~= "function"
+        or type(C_LFGList.GetApplicantInfo) ~= "function"
+        or type(C_LFGList.GetApplicantMemberInfo) ~= "function"
+    then
+        return
+    end
+    local ok, applicants = pcall(C_LFGList.GetApplicants)
+    local list = ok and Util.SafeTable(applicants) or nil
+    if not list then
+        return
+    end
+    local now = GetWallClock()
+    if now <= 0 then
+        return
+    end
+    for _, applicantID in ipairs(list) do
+        local okInfo, rawInfo = pcall(C_LFGList.GetApplicantInfo, applicantID)
+        local info = okInfo and Util.SafeTable(rawInfo) or nil
+        local numMembers = info and Util.SafeNumber(info.numMembers) or nil
+        if numMembers then
+            for memberIndex = 1, numMembers do
+                -- Return order: name, class, localizedClass, level, itemLevel,
+                -- honorLevel, tank, healer, damage, assignedRole, relationship,
+                -- dungeonScore, ... With pcall's leading boolean that puts the
+                -- eleventh underscore slot on relationship and the last
+                -- captured value on dungeonScore.
+                local okMember, rawName, _, _, _, _, _, _, _, _, _, _, rawScore =
+                    pcall(C_LFGList.GetApplicantMemberInfo, applicantID, memberIndex)
+                if okMember then
+                    local name = NormalizeShortName(rawName)
+                    local score = Util.SafeNumber(rawScore)
+                    if name and score then
+                        applicantScores[name] = { score = score, at = now }
+                    end
+                end
+            end
+        end
+    end
+    for name, entry in pairs(applicantScores) do
+        if (now - entry.at) > APPLICANT_CACHE_TTL then
+            applicantScores[name] = nil
+        end
+    end
+end
+
+local function GetApplicantScore(unit)
+    local name = NormalizeShortName(GetUnitDisplayName(unit))
+    local entry = name and applicantScores[name] or nil
+    return entry and entry.score or nil
+end
+
+local function CaptureRunMembers()
+    local members = {}
+    local region = ns.GetSelectedRegion()
+    for _, unit in ipairs(GetPartyUnits()) do
+        local guid = GetUnitGUID(unit)
+        if guid then
+            local fullName = GetUnitDisplayName(unit)
+            local realm = GetUnitRealm(unit)
+            if type(UnitFullName) == "function" then
+                local ok, name, fullRealm = pcall(UnitFullName, unit)
+                name = ok and Util.SafeString(name) or nil
+                fullRealm = ok and Util.SafeString(fullRealm) or nil
+                if name and name ~= "" then
+                    realm = (fullRealm and fullRealm ~= "" and fullRealm) or realm
+                    fullName = name .. (realm and ("-" .. realm) or "")
+                end
+            end
+            local score = ReadUnitMythicPlusScore(unit)
+            members[#members + 1] = {
+                guid = guid,
+                fullName = fullName,
+                realm = realm,
+                name = fullName and fullName:match("^([^-]+)") or nil,
+                scoreBefore = score,
+                rankBefore = score and EstimateRankForScore(region, score) or nil,
+            }
+        end
+    end
+    return members
+end
+
+local function AnnounceRunMembers(members, generation)
+    if run.generation ~= generation or run.active then return end
+    if type(ns.IsRunGainAnnouncementEnabled) == "function" and not ns.IsRunGainAnnouncementEnabled() then return end
+    if type(IsInGroup) == "function" then
+        local ok, grouped = pcall(IsInGroup, LE_PARTY_CATEGORY_HOME or 1)
+        if not ok or not grouped then return end
+    end
+    local region = ns.GetSelectedRegion()
+    local regionLabel = GetRegionLabel()
+    local targetCutoffs, targetAchievements = BuildRankTargetContext(region)
+    local messages = {}
+    for _, member in ipairs(members) do
+        local score = member.scoreAfter
+        local rank = score and EstimateRankForScore(region, score) or nil
+        local nextTarget, nextDistance, nextTargetText =
+            BuildNextTargetValues(score, targetCutoffs, targetAchievements)
+        local values = {
+            name = member.name or "?",
+            score = score and FormatScoreValue(score) or "--",
+            scoreGain = score and member.scoreBefore and FormatScoreValue(math.max(0, score - member.scoreBefore)) or "--",
+            region = regionLabel or "",
+            rank = rank and FormatRankValue(rank) or "--",
+            rankGain = rank and member.rankBefore and FormatRankValue(math.max(0, member.rankBefore - rank)) or "--",
+            nextTarget = nextTarget or "",
+            nextDistance = nextDistance or "",
+            nextTargetText = nextTargetText or "",
+        }
+        local message = ExpandTemplate(GetAnnounceTemplate("RUN_MEMBER_LINE"), values)
+        if message then messages[#messages + 1] = message end
+    end
+    if #messages == 0 then return end
+    local ad = ExpandTemplate(GetAnnounceTemplate("RUN_GAIN_LINE_AD"), {
+        region = regionLabel or "",
+        date = GetPackDateText(region) or "",
+        updateTime = GetUpdateTimeText(region) or "",
+    })
+    if ad then messages[#messages + 1] = ad end
+    for index, message in ipairs(messages) do
+        QueueChatMessage(message, index * ANNOUNCE_LINE_INTERVAL, generation)
+    end
+end
+
+SchedulePostRunCheck = function()
+    if not run.active then return end
+    run.active = false
+    local generation = run.generation
+    local members = run.members
+    if #members == 0 then return end
+    local attempts = 0
+    local function CheckMembers()
+        if run.generation ~= generation or run.active then return end
+        local allChanged = true
+        for _, member in ipairs(members) do
+            local unit = FindUnitByGUID(member.guid)
+            if unit then
+                local score = ReadUnitMythicPlusScore(unit)
+                if score then member.scoreAfter = score end
+            end
+            if not member.scoreAfter or (member.scoreBefore and member.scoreAfter <= member.scoreBefore + 0.05) then
+                allChanged = false
+            end
+        end
+        attempts = attempts + 1
+        if not allChanged and attempts < 4 and C_Timer and type(C_Timer.After) == "function" then
+            C_Timer.After(2, CheckMembers)
+        else
+            AnnounceRunMembers(members, generation)
+        end
+    end
+    local delay = GetRunAnnounceDelay()
+    if delay > 0 and C_Timer and type(C_Timer.After) == "function" then
+        C_Timer.After(delay, CheckMembers)
+    else
+        CheckMembers()
+    end
+end
+
 local function AnnounceMemberWelcome(unit, guid, score, record, previousScore, previousSeen)
     local name = GetUnitDisplayName(unit)
     if not name then
+        lastWelcomeIssue = "no name"
         return false
     end
     local region = ns.GetSelectedRegion()
     local regionLabel = GetRegionLabel()
     if not region or not regionLabel then
+        lastWelcomeIssue = "no region"
         return false
     end
     local rank = EstimateRankForScore(region, score)
     if not rank then
+        lastWelcomeIssue = "no rank"
         return false
     end
     local values = {
@@ -696,67 +874,117 @@ local function AnnounceMemberWelcome(unit, guid, score, record, previousScore, p
         message = ExpandTemplate(GetAnnounceTemplate("MEMBER_WELCOME_FORMAT"), values)
     end
     if not message then
+        lastWelcomeIssue = "no template"
         return false
     end
-    if type(SendChatMessage) == "function" then
-        local sent = pcall(SendChatMessage, message, "PARTY")
-        if sent then
-            if record then
-                record.score = score
-                record.name = name
-            end
-            return true
+    local sent, reason = Util.SendPartyMessage(message)
+    if sent then
+        lastWelcomeIssue = "sent"
+        if record then
+            record.score = score
+            record.name = name
         end
+        return true
     end
+    lastWelcomeIssue = reason or "send failed"
     return false
 end
 
+local ProcessPendingWelcomes
+
+local function ScheduleWelcomePoll()
+    if welcomePollScheduled or next(pendingWelcomes) == nil then
+        return
+    end
+    if not (C_Timer and type(C_Timer.After) == "function") then
+        return
+    end
+    welcomePollScheduled = true
+    C_Timer.After(WELCOME_RETRY_INTERVAL, function()
+        welcomePollScheduled = false
+        ProcessPendingWelcomes()
+    end)
+end
+
+-- One pass over every member still waiting for a readable score. Members that
+-- were greeted, left the party, or were cancelled by the key start leave the
+-- queue; a single shared timer carries the remaining ones to the next pass.
+ProcessPendingWelcomes = function()
+    if run.active then
+        ClearPendingWelcomes()
+        lastWelcomeIssue = "cancelled"
+        return
+    end
+    for guid, entry in pairs(pendingWelcomes) do
+        if entry.generation ~= pollGeneration then
+            pendingWelcomes[guid] = nil
+            lastWelcomeIssue = "cancelled"
+        else
+            -- Roster reshuffles move members between party slots; re-locate by
+            -- GUID. Only give up when they actually left the party.
+            local unit = FindUnitByGUID(guid)
+            if not unit then
+                pendingWelcomes[guid] = nil
+                lastWelcomeIssue = "member left"
+            elseif not IsWelcomeEligible() then
+                pendingWelcomes[guid] = nil
+                lastWelcomeIssue = "welcome disabled"
+            elseif IsCombatLocked() then
+                lastWelcomeIssue = "combat lockdown"
+            else
+                local score = ReadUnitMythicPlusScore(unit)
+                if not score then
+                    -- Fall back to the score the Group Finder showed while this
+                    -- member was still an applicant.
+                    score = GetApplicantScore(unit)
+                end
+                local welcomed = score and AnnounceMemberWelcome(
+                    unit, guid, score, entry.record, entry.previousScore, entry.previousSeen
+                )
+                if welcomed then
+                    pendingWelcomes[guid] = nil
+                elseif not score then
+                    -- The client may have no cached rating for this player yet;
+                    -- the shared poll retries until it becomes readable, the
+                    -- member leaves, or the key starts.
+                    lastWelcomeIssue = "no score"
+                end
+            end
+        end
+    end
+    ScheduleWelcomePoll()
+end
+
 local function ScheduleMemberWelcome(guid, record, previousScore, previousSeen)
-    local generation = pollGeneration
-    local TryWelcome
-    local function Retry()
-        if C_Timer and type(C_Timer.After) == "function" then
-            C_Timer.After(WELCOME_RETRY_INTERVAL, TryWelcome)
-        end
+    pendingWelcomes[guid] = {
+        record = record,
+        previousScore = previousScore,
+        previousSeen = previousSeen,
+        generation = pollGeneration,
+    }
+end
+
+-- A run whose completion event never arrived (abandoned key, leaving the
+-- instance before the summary, disconnect) must not suppress later welcomes
+-- and run summaries for the rest of the session.
+local function ResetStaleRunState()
+    if not run.active then
+        return
     end
-    TryWelcome = function()
-        -- The run starting (or a newer poll generation) cancels every pending
-        -- welcome; polling otherwise continues until the score is available or
-        -- the member leaves.
-        if generation ~= pollGeneration or run.active then
-            return
-        end
-        -- The member may have moved to a different party slot; re-locate by
-        -- GUID. Only give up when they actually left the party.
-        local currentUnit = FindUnitByGUID(guid)
-        if not currentUnit then
-            return -- member left before we could greet them
-        end
-        if not IsWelcomeEligible() then
-            return
-        end
-        if IsCombatLocked() then
-            Retry()
-            return
-        end
-        local score = ReadUnitMythicPlusScore(currentUnit)
-        if score
-            and AnnounceMemberWelcome(currentUnit, guid, score, record, previousScore, previousSeen)
-        then
-            return
-        end
-        Retry()
+    if type(IsInInstance) ~= "function" then
+        return
     end
-    -- The first read is attempted immediately; retries only happen while the
-    -- score is not readable yet (or while combat lockdown blocks party chat UI
-    -- work), so an immediately available score is announced right away.
-    TryWelcome()
+    local ok, inInstance = pcall(IsInInstance)
+    if ok and not inInstance then
+        run.active = false
+    end
 end
 
 -- Refreshes the tracked party roster. New members are greeted only when
 -- announceNew is true (roster seeding at login must stay silent).
 local function RefreshRoster(announceNew)
     PruneEncounters()
+    ResetStaleRunState()
     -- Raid rosters are not tracked; keeping the party history avoids greeting
     -- everyone again when a raid converts back to a party.
     if type(IsInRaid) == "function" then
@@ -779,10 +1007,12 @@ local function RefreshRoster(announceNew)
     end
     for guid, unit in pairs(seen) do
         if not welcomeState.known[guid] then
-            welcomeState.known[guid] = true
-            -- Members joining mid-run are not counted or greeted: the lobby
-            -- welcome already ended when the key started.
-            if announceNew and not run.active and IsWelcomeEligible() then
+            if run.active or not announceNew then
+                -- Mid-run joins stay ungreeted and roster seeding at login
+                -- stays silent; both are still recorded as seen.
+                welcomeState.known[guid] = true
+            elseif IsWelcomeEligible() then
+                welcomeState.known[guid] = true
                 local record, previousScore, previousSeen = RecordEncounter(
                     guid,
                     GetUnitDisplayName(unit),
@@ -792,33 +1022,67 @@ local function RefreshRoster(announceNew)
                     ScheduleMemberWelcome(guid, record, previousScore, previousSeen)
                 end
             end
+            -- When the welcome setting is off (or the party state is still
+            -- settling), the member is not marked as known so a later roster
+            -- update can still greet them.
         end
+    end
+    -- Attempt every queued welcome once right away (an already readable score
+    -- greets immediately); the shared poll retries the rest.
+    if next(pendingWelcomes) ~= nil then
+        ProcessPendingWelcomes()
     end
 end
 
 local eventFrame = CreateFrame("Frame")
+local bannerSuppressed = false
+local function SuppressBlizzardCompletionBanner()
+    local banner = _G.ChallengeModeCompleteBanner
+    if not banner then return end
+    if not bannerSuppressed and type(banner.HookScript) == "function" then
+        banner:HookScript("OnShow", function(self) self:Hide() end)
+        bannerSuppressed = true
+    end
+    if type(banner.Hide) == "function" then banner:Hide() end
+end
+
 eventFrame:RegisterEvent("CHALLENGE_MODE_START")
 eventFrame:RegisterEvent("CHALLENGE_MODE_COMPLETED")
+eventFrame:RegisterEvent("ADDON_LOADED")
 eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 eventFrame:RegisterEvent("GROUP_ROSTER_UPDATE")
+eventFrame:RegisterEvent("LFG_LIST_APPLICANT_UPDATED")
+eventFrame:RegisterEvent("LFG_LIST_APPLICANT_LIST_UPDATED")
 eventFrame:SetScript("OnEvent", function(_, event)
     if event == "CHALLENGE_MODE_START" then
         run.active = true
-        run.scoreBefore = ReadPlayerScore()
+        run.generation = run.generation + 1
+        run.members = CaptureRunMembers()
         -- Cancels every pending welcome poll chain.
         pollGeneration = pollGeneration + 1
+        ClearPendingWelcomes()
     elseif event == "CHALLENGE_MODE_COMPLETED" then
+        SuppressBlizzardCompletionBanner()
         SchedulePostRunCheck()
+    elseif event == "ADDON_LOADED" then
+        SuppressBlizzardCompletionBanner()
     elseif event == "PLAYER_ENTERING_WORLD" then
         RefreshRoster(false)
     elseif event == "GROUP_ROSTER_UPDATE" then
+        CacheApplicantScores()
         RefreshRoster(true)
+    elseif event == "LFG_LIST_APPLICANT_UPDATED" or event == "LFG_LIST_APPLICANT_LIST_UPDATED" then
+        CacheApplicantScores()
     end
 end)
 
 -- One-line state dump for the debug slash commands.
 local function DescribeAnnounceState()
     local db = type(ns.GetDB) == "function" and ns.GetDB() or nil
+    local knownCount = 0
+    for _ in pairs(welcomeState.known) do
+        knownCount = knownCount + 1
+    end
     return table.concat({
         "announce:",
         "region=" .. tostring(ns.GetSelectedRegion and ns.GetSelectedRegion() or nil),
@@ -827,13 +1091,16 @@ local function DescribeAnnounceState()
         "teleport=" .. tostring(not (db and db.announceTeleport == false)),
         "delay=" .. tostring(db and db.announceDelay or nil),
         "runActive=" .. tostring(run.active == true),
+        "known=" .. tostring(knownCount),
+        "welcomeIssue=" .. tostring(lastWelcomeIssue),
         "members=" .. tostring(#GetPartyUnits()),
     }, " ")
 end
 
 -- Exposed for tests and diagnostics only.
 ns.RunSummary = {
-    AnnounceRunGain = AnnounceRunGain,
+    AnnounceRunMembers = AnnounceRunMembers,
+    CaptureRunMembers = CaptureRunMembers,
     EstimateRankForScore = EstimateRankForScore,
     ReadPlayerScore = ReadPlayerScore,
     RefreshRoster = RefreshRoster,

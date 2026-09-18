@@ -24,6 +24,7 @@ local DEFAULTS = {
     announceMemberJoin = true,
     announceDelay = 5,
     announceTexts = {},
+    ceremony = { enabled = true, sound = true, scale = 1, y = 0, duration = 10 },
     enableMythicDetail = true,
     borderStyle = "gold",
     borderAlpha = 0.85,
@@ -136,6 +137,41 @@ local function InitializeDatabase()
     db.announceDelay = Util.ClampNumber(db.announceDelay, 0, 60, DEFAULTS.announceDelay)
     if type(db.announceTexts) ~= "table" then
         db.announceTexts = {}
+    end
+    -- Older builds persisted the built-in template text as an override when a
+    -- settings box lost focus without edits; drop those so future default-text
+    -- updates take effect. RUN_MEMBER_LINE also had an older default wording.
+    local LEGACY_ANNOUNCE_TEMPLATES = {
+        RUN_MEMBER_LINE = {
+            "{name}: score <{score}> (+{scoreGain}) | {region} rank <~{rank}> (up <~{rankGain}>)",
+            "{name}：当前<{score}>分，本次提升<{scoreGain}>分；{region}排名<~{rank}>名，本次提升<~{rankGain}>名",
+        },
+        -- Bare "|" separators made the 12.x chat API reject these with
+        -- "Invalid escape code in chat message"; the defaults no longer use
+        -- pipes, so drop overrides that still match the old wording.
+        MEMBER_WELCOME_FORMAT = {
+            "Met {meetCount}x this month | {name} | M+ score: {score} | {region} rank ~{rank}. Welcome aboard, good luck!",
+            "{name}，本月第{meetCount}次遇到 | 现大秘境分数：{score}，{region}排名约 {rank} 名。欢迎加入，一起加油吧！",
+            "{name}，本月第{meetCount}次遇到 | 現大秘境分數：{score}，{region}排名約 {rank} 名。歡迎加入，一起加油吧！",
+        },
+        MEMBER_WELCOME_AGAIN_FORMAT = {
+            "{name} | met {meetCount}x this month | {scoreChangeText} | last met: {lastMeetTime}",
+        },
+    }
+    for key, value in pairs(db.announceTexts) do
+        local stale = value == L[key]
+        local legacy = LEGACY_ANNOUNCE_TEMPLATES[key]
+        if not stale and type(legacy) == "table" then
+            for _, legacyText in ipairs(legacy) do
+                if value == legacyText then
+                    stale = true
+                    break
+                end
+            end
+        end
+        if stale then
+            db.announceTexts[key] = nil
+        end
     end
     if type(db.enableMythicDetail) ~= "boolean" then
         db.enableMythicDetail = DEFAULTS.enableMythicDetail
@@ -578,9 +614,11 @@ local function RefreshHUDData(force)
             and Util.SafeNumber(baselineExtendedEstimate.estimatedRank) or nil
     end
     local baselineBracket = baselineResult and Util.SafeString(baselineResult.bracket) or nil
-    local currentTop01 = score >= cutoff01Score or resultBracket == "p999"
+    local hasRoundedTopRank = result.isRoundedLeaderboardRank == true
+    local baselineHasRoundedTopRank = baselineResult and baselineResult.isRoundedLeaderboardRank == true
+    local currentTop01 = hasRoundedTopRank or score >= cutoff01Score or resultBracket == "p999"
     local baselineTop01 = baselineScore >= cutoff01Score
-        or baselineBracket == "p999"
+        or baselineBracket == "p999" or baselineHasRoundedTopRank
     local topRankMax = rankMax or Util.SafeNumber(cutoff01.rank)
     local topPercentile = percentileMax or Util.SafeNumber(cutoff01.percentile) or 0.1
 
@@ -600,7 +638,11 @@ local function RefreshHUDData(force)
     end
     SetRow(rows.todayScore, L.TODAY_SCORE, string.format(L.SCORE_POINTS, scoreGainText), gainR, gainG, gainB)
 
-    if currentTop01 and topRankMax then
+    if hasRoundedTopRank and estimatedRank then
+        local value = result.isRoundedTie and string.format(L.TOP_TIED_RANK_VALUE, FormatInteger(estimatedRank))
+            or string.format(L.APPROX_RANK, FormatCompactRank(estimatedRank))
+        SetRow(rows.rank, rankLabel, value, 1, 0.82, 0)
+    elseif currentTop01 and topRankMax then
         SetRow(rows.rank, rankLabel, string.format(L.TOP_RANK_VALUE, FormatInteger(topRankMax)), 1, 0.82, 0)
     elseif estimatedRank then
         SetRow(rows.rank, rankLabel, string.format(L.APPROX_RANK, FormatCompactRank(estimatedRank)), 1, 0.82, 0)
@@ -612,7 +654,10 @@ local function RefreshHUDData(force)
     end
 
     local population = Util.SafeNumber(metadata.population)
-    if currentTop01 then
+    if hasRoundedTopRank and estimatedRank and population and population > 0 then
+        local surpassed = math.max(0, math.min(100, 100 - (estimatedRank / population * 100)))
+        SetRow(rows.surpassed, L.SURPASSED, string.format(L.APPROX, string.format("%.1f%%", surpassed)), 0.45, 0.85, 1)
+    elseif currentTop01 then
         local surpassedAtLeast = math.max(0, math.min(100, 100 - topPercentile))
         SetRow(
             rows.surpassed,
@@ -634,7 +679,16 @@ local function RefreshHUDData(force)
         SetRow(rows.surpassed, L.SURPASSED, L.UNAVAILABLE, 0.65, 0.65, 0.65)
     end
 
-    if currentTop01 then
+    if hasRoundedTopRank and baselineHasRoundedTopRank and baselineEstimatedRank then
+        local movement = baselineEstimatedRank - estimatedRank
+        local text = string.format(L.APPROX_RANK, FormatCompactRank(math.abs(movement)))
+        if movement > 0 then
+            text = string.format(L.TODAY_FORWARD_VALUE, FormatCompactRank(movement))
+        elseif movement < 0 then
+            text = string.format(L.TODAY_BACK_VALUE, FormatCompactRank(-movement))
+        end
+        SetRow(rows.todayRank, L.TODAY_RANK, text, 0.82, 0.82, 0.82)
+    elseif currentTop01 then
         if baselineTop01 then
             SetRow(rows.todayRank, L.TODAY_RANK, L.TODAY_WITHIN_TOP_01, 0.82, 0.82, 0.82)
         else
@@ -701,7 +755,11 @@ local function RefreshHUDData(force)
         SetRow(rows.toTop25, L.SMART_NEXT_TARGET, "--", 0.65, 0.65, 0.65)
     end
 
-    if currentTop01 and topRankMax then
+    if hasRoundedTopRank and rankMin and rankMax then
+        local value = rankMin == rankMax and FormatInteger(rankMin)
+            or string.format(L.RANGE_JOIN, FormatInteger(rankMin), FormatInteger(rankMax))
+        SetRow(rows.rankRange, L.RANK_RANGE, value, 0.82, 0.82, 0.82)
+    elseif currentTop01 and topRankMax then
         SetRow(
             rows.rankRange,
             L.RANK_RANGE,
@@ -827,17 +885,6 @@ function ns.ResetAnnounceTemplates()
 end
 
 
-function ns.GetDailyBaselineScore()
-    local state = GetDB().characters[GetCharacterKey()]
-    if type(state) == "table"
-        and state.dateKey == GetDateKey()
-        and type(state.baselineScore) == "number"
-    then
-        return state.baselineScore
-    end
-    return nil
-end
-
 function ns.SetDetailEnabled(value)
     GetDB().enableMythicDetail = value == true
 end
@@ -913,6 +960,8 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
         InitializeDatabase()
         ns.ResolveSelectedRegion()
         if not englishTextWarningPrinted
+            and CLIENT_LOCALE ~= "zhCN"
+            and CLIENT_LOCALE ~= "zhTW"
             and (L.SCORE ~= "M+ Score"
                 or L.DETAIL_COLUMN_NAME ~= "Dungeon"
                 or L.VAULT_RAID ~= "Raid")

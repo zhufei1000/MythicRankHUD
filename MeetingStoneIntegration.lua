@@ -531,8 +531,7 @@ local function SendTeleportAnnouncement(unit, castGUID, spellID)
         return nil
     end)
     if not ok or type(message) ~= "string" or message == "" then return end
-    if type(SendChatMessage) ~= "function" then return end
-    local sent = pcall(SendChatMessage, message, "PARTY")
+    local sent = Util.SendPartyMessage(message)
     if sent then
         integration.lastTeleportAnnouncementGUID = guid
         integration.lastTeleportAnnouncementSpellID = spellID

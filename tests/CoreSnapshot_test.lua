@@ -142,6 +142,8 @@ local L = setmetatable({
     PERCENTILE_RANGE = "Percentile",
     UNAVAILABLE = "Unavailable",
     REGION_RANK_FORMAT = "%s Rank",
+    TOP_TIED_RANK_VALUE = "tied #%s",
+    RANGE_JOIN = "%s-%s",
     DATA_DATE_FORMAT = "%04d-%02d-%02d",
     DATA_UPDATED = "Updated: %s",
     DATA_TIME_FORMAT = "%02d-%02d %02d:%02d UTC",
@@ -239,6 +241,17 @@ assert(
     "snapshot did not show only the source update timestamp"
 )
 assert(#createdFrames == frameCountBeforeSnapshot, "snapshot refresh created a UI frame")
+
+QFXMythicRankData.GetPlayerScore = function() return 4453 end
+QFXMythicRankData.EstimateRank = function()
+    return {
+        bracket = "p999", estimatedRank = 5, rankMin = 5, rankMax = 20,
+        isRoundedLeaderboardRank = true, isRoundedTie = true,
+    }
+end
+local topSnapshot = namespace.GetHUDSnapshot(true)
+assert(topSnapshot.rank.value == "tied #5", "rounded leaderboard tie was not displayed")
+assert(topSnapshot.rankRange.value == "5-20", "rounded leaderboard tie range was not displayed")
 
 for _, frame in ipairs(createdFrames) do
     assert(frame.name ~= "QFXMythicRankHUDGlobalFrame", "retired standalone HUD frame was created")

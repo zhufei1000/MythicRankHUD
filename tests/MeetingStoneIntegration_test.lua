@@ -268,6 +268,9 @@ local namespace = {
 
 local modulePath = arg and arg[1] or "MeetingStoneIntegration.lua"
 local addonName = arg and arg[2] or "MythicRankHUD"
+local utilNamespace = {}
+assert(loadfile("Util.lua"))(addonName, utilNamespace)
+namespace.Util.SendPartyMessage = utilNamespace.Util.SendPartyMessage
 local isCNBuild = addonName == "QFXMythicRankHUD"
 local chunk = assert(loadfile(modulePath))
 chunk(addonName, namespace)

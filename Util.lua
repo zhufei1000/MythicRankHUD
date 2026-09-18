@@ -52,6 +52,34 @@ function Util.SafeTable(value)
     return value
 end
 
+function Util.SendPartyMessage(message)
+    local chat = _G.C_ChatInfo
+    if type(chat) == "table" and type(chat.InChatMessagingLockdown) == "function" then
+        local ok, locked = pcall(chat.InChatMessagingLockdown)
+        if not ok or locked then
+            return false, ok and "chat lockdown" or "chat status unavailable"
+        end
+    end
+
+    local sender = type(chat) == "table" and chat.SendChatMessage or nil
+    if type(sender) ~= "function" then
+        sender = _G.SendChatMessage
+    end
+    if type(sender) ~= "function" then
+        return false, "chat API unavailable"
+    end
+
+    local ok, err = pcall(sender, message, "PARTY")
+    if not ok and type(err) == "string" and err:find("escape", 1, true) then
+        -- The chat frame rejects bare pipes as invalid escape codes; retry with
+        -- a full-width bar so a stray "|" in a user-edited template cannot
+        -- block the message.
+        local sanitized = message:gsub("|", "｜")
+        ok, err = pcall(sender, sanitized, "PARTY")
+    end
+    return ok, ok and nil or tostring(err)
+end
+
 function Util.ClampNumber(value, minimum, maximum, fallback)
     if not Util.IsAccessible(value) then
         return fallback

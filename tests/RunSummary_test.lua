@@ -58,6 +58,13 @@ _G.QFXMythicRankData = {
         return { estimatedRank = 200000 - score * 10 }
     end,
     GetMetadata = function() return { population = 200000, dataVersion = "202609070404" } end,
+    GetCutoff = function(_, region, key, faction)
+        assert(region == "cn", "cutoff used the selected region")
+        assert(faction == "all", "cutoff used the all faction scope")
+        local cutoffScores = { p999 = 3800, p990 = 3500, p900 = 3200, p750 = 3000, p600 = 2800 }
+        return { score = cutoffScores[key], color = "#ff8000" }
+    end,
+    GetAchievementCutoff = function() return nil end,
 }
 
 local function SafeNumber(value)
@@ -74,6 +81,18 @@ local function SafeTable(value)
     return nil
 end
 
+local function SafeString(value)
+    return type(value) == "string" and value or nil
+end
+
+local function ClampNumber(value, minimum, maximum, fallback)
+    local numberValue = tonumber(value)
+    if not numberValue then
+        return fallback
+    end
+    return math.max(minimum, math.min(maximum, numberValue))
+end
+
 local namespace = {
     L = {
 
@@ -84,8 +103,22 @@ local namespace = {
         RUN_GAIN_LINE_AD = "[MythicRankHUD-{date}]",
         RUN_REGION_LABEL_CN = "CN",
         PACK_DATE_SEPARATOR = ".",
+        TOP_PERCENT = "top %s%%",
+        SMART_CUTOFF_LINE_FORMAT = "Top %s%% cutoff",
+        RUN_NEXT_TARGET_FORMAT = "%s in %s pts",
+        RUN_NEXT_TARGET_COMPLETE = "all targets reached",
+        ACHIEVEMENT_KEYSTONE_EXPLORER = "Keystone Explorer",
+        ACHIEVEMENT_KEYSTONE_CONQUEROR = "Keystone Conqueror",
+        ACHIEVEMENT_KEYSTONE_MASTER = "Keystone Master",
+        ACHIEVEMENT_KEYSTONE_HERO = "Keystone Hero",
+        ACHIEVEMENT_KEYSTONE_LEGEND = "Keystone Legend",
     },
-    Util = { SafeNumber = SafeNumber, SafeTable = SafeTable },
+    Util = {
+        SafeNumber = SafeNumber,
+        SafeTable = SafeTable,
+        SafeString = SafeString,
+        ClampNumber = ClampNumber,
+    },
     GetSelectedRegion = function() return "cn" end,
     GetRegionLabel = function(region) return string.upper(region) end,
     IsRunGainAnnouncementEnabled = function() return announcementEnabled end,
@@ -99,6 +132,8 @@ local namespace = {
 
 local modulePath = arg and arg[1] or "RunSummary.lua"
 local addonName = arg and arg[2] or "MythicRankHUD"
+local rankTargetChunk = assert(loadfile("RankTarget.lua"))
+rankTargetChunk(addonName, namespace)
 local chunk = assert(loadfile(modulePath))
 chunk(addonName, namespace)
 
@@ -113,108 +148,79 @@ assert(eventFrame, "run summary event frame was not created")
 assert(eventFrame.events.PLAYER_ENTERING_WORLD and eventFrame.events.GROUP_ROSTER_UPDATE,
     "roster events must be registered for the party-join welcome")
 
--- Baseline capture on run start; run start itself schedules nothing.
-eventFrame.scripts.OnEvent(eventFrame, "CHALLENGE_MODE_START", "player")
-assert(not StepTimer(), "run start scheduled a timer")
-
--- Completion: waits for the configured delay, polls until Blizzard refreshes
--- the score, then announces the four summary lines one second apart.
-eventFrame.scripts.OnEvent(eventFrame, "CHALLENGE_MODE_COMPLETED")
-StepTimer() -- announcement delay (5s) elapsed, score still 3000 -> poll
-StepTimer() -- poll retry 1
-playerScore = 3032
-assert(#chatMessages == 0, "announced before the score was refreshed")
-StepTimer() -- poll retry 2: score updated -> the four lines are queued
-assert(#chatMessages == 0, "summary lines were sent without their spacing")
-assert(StepTimer(), "summary line 1 was not scheduled")
-assert(chatMessages[1].message == "This run: <32> points | Rank up <~320>",
-    "summary line 1 was incorrect: " .. tostring(chatMessages[1].message))
-assert(chatMessages[1].channel == "PARTY", "summary did not use party chat")
-assert(StepTimer(), "summary line 2 was not scheduled")
-assert(chatMessages[2].message == "Today: <64> points | <~640> ranks",
-    "summary line 2 was incorrect: " .. tostring(chatMessages[2].message))
-assert(StepTimer(), "summary line 3 was not scheduled")
-assert(chatMessages[3].message == "Current score <3032> | CN rank <~169680>",
-    "summary line 3 was incorrect: " .. tostring(chatMessages[3].message))
-assert(StepTimer(), "summary line 4 was not scheduled")
-assert(chatMessages[4].message == "[MythicRankHUD-9.7]",
-    "summary line 4 was incorrect: " .. tostring(chatMessages[4].message))
-for index = 1, 4 do
-    assert(not chatMessages[index].message:find("<QFX>"), "summary still carries the QFX suffix")
+-- A run captures full identities and scores, but party chat uses short names.
+local runGuids = { party1 = "GUID-A", party2 = "GUID-B" }
+local runNames = { party1 = "同名-甲服", party2 = "同名-乙服" }
+local runRealms = { party1 = "甲服", party2 = "乙服" }
+local runScores = { party1 = 3000, party2 = 3200 }
+_G.UnitGUID = function(unit) return runGuids[unit] end
+_G.GetUnitName = function(unit) return runNames[unit] end
+_G.UnitFullName = function(unit)
+    local name = runNames[unit]
+    return name and name:match("^([^-]+)") or nil, runRealms[unit]
 end
-assert(#chatMessages == 4, "the summary did not send exactly four lines")
-assert(not StepTimer(), "retry loop kept scheduling after announcing")
-local converter = namespace.RunSummary and namespace.RunSummary.FormatDataVersionLocal
-assert(converter("202609062044", "cn") == "09-07 04:44", "CN pack sample conversion was incorrect: " .. tostring(converter("202609062044", "cn")))
-assert(converter("202609070404", "kr") == "09-07 13:04", "KR conversion was incorrect")
-assert(converter("202609070404", "us") == "09-06 23:04", "US conversion was incorrect")
-assert(converter("202609070404", "eu") == "09-07 05:04", "EU conversion was incorrect")
-assert(converter("202612312359", "cn") == "01-01 07:59", "year rollover conversion was incorrect")
-assert(converter("bad", "cn") == nil, "invalid dataVersion should not convert")
+_G.C_PlayerInfo = {
+    GetPlayerMythicPlusRatingSummary = function(unit)
+        return runScores[unit] and { currentSeasonScore = runScores[unit] } or nil
+    end,
+}
 
--- A second completion without a new run start has no baseline: skip silently.
+local utilNamespace = {}
+assert(loadfile("Util.lua"))("MythicRankHUD", utilNamespace)
+namespace.Util.SendPartyMessage = utilNamespace.Util.SendPartyMessage
+namespace.L.RUN_MEMBER_LINE = "{name}: {score} +{scoreGain} | {rank} +{rankGain} | {nextTargetText}"
+eventFrame.scripts.OnEvent(eventFrame, "CHALLENGE_MODE_START")
+local captured = namespace.RunSummary.CaptureRunMembers()
+assert(#captured == 2 and captured[1].fullName == "同名-甲服" and captured[2].fullName == "同名-乙服",
+    "same-name members did not retain their realms")
+assert(not StepTimer(), "run start scheduled an unexpected timer")
+-- Roster slots swap while the key is active; GUID lookup must still match.
+runGuids.party1, runGuids.party2 = runGuids.party2, runGuids.party1
+runNames.party1, runNames.party2 = runNames.party2, runNames.party1
+runRealms.party1, runRealms.party2 = runRealms.party2, runRealms.party1
+runScores.party1, runScores.party2 = 3220, 3010
+local banner = {
+    shown = true,
+    Hide = function(self) self.shown = false end,
+    HookScript = function(self, event, callback) self[event] = callback end,
+}
+_G.ChallengeModeCompleteBanner = banner
 eventFrame.scripts.OnEvent(eventFrame, "CHALLENGE_MODE_COMPLETED")
-playerScore = 3100
+assert(not banner.shown and type(banner.OnShow) == "function", "Blizzard completion banner was not suppressed")
+banner.shown = true
+banner.OnShow(banner)
+assert(not banner.shown, "a later Blizzard banner show was not suppressed")
 DrainTimers()
-assert(#chatMessages == 4, "completed event without an active run announced again")
-
--- Score never improves (replay below previous best): line 1 uses the no-gain
--- wording while today's gain is still reported.
-eventFrame.scripts.OnEvent(eventFrame, "CHALLENGE_MODE_START", "player")
+assert(#chatMessages == 3, "expected two teammate lines and one ad")
+assert(chatMessages[1].message == "同名: 3010 +10 | 169900 +100 | top 10% in 190 pts", "first teammate result mismatch")
+assert(chatMessages[2].message == "同名: 3220 +20 | 167800 +200 | top 1% in 280 pts", "second teammate result mismatch")
+assert(chatMessages[3].message == "[MythicRankHUD-9.7]", "advertisement must be last")
+assert(chatMessages[1].channel == "PARTY", "teammate summary used the wrong channel")
 eventFrame.scripts.OnEvent(eventFrame, "CHALLENGE_MODE_COMPLETED")
 DrainTimers()
-assert(#chatMessages == 8, "a run without score gain was not announced")
-assert(chatMessages[5].message == "No score gain this run",
-    "zero-gain line 1 was incorrect: " .. tostring(chatMessages[5].message))
-assert(chatMessages[6].message == "Today: <132> points | <~1320> ranks",
-    "zero-gain line 2 was incorrect: " .. tostring(chatMessages[6].message))
-assert(chatMessages[7].message == "Current score <3100> | CN rank <~169000>",
-    "zero-gain line 3 was incorrect: " .. tostring(chatMessages[7].message))
-assert(chatMessages[8].message == "[MythicRankHUD-9.7]",
-    "zero-gain line 4 was incorrect: " .. tostring(chatMessages[8].message))
-assert(not StepTimer(), "retry loop kept scheduling after announcing")
+assert(#chatMessages == 3, "completion without start announced twice")
+local converter = namespace.RunSummary.FormatDataVersionLocal
+assert(converter("202609062044", "cn") == "09-07 04:44")
+assert(converter("202609070404", "kr") == "09-07 13:04")
+assert(converter("202609070404", "us") == "09-06 23:04")
+assert(converter("202609070404", "eu") == "09-07 05:04")
+assert(converter("202612312359", "cn") == "01-01 07:59")
+assert(converter("bad", "cn") == nil)
 
--- Without a daily baseline the today line is dropped: three lines remain.
-dailyBaseline = nil
-eventFrame.scripts.OnEvent(eventFrame, "CHALLENGE_MODE_START", "player")
+-- A missing post-run score is not guessed.
+runScores.party2 = nil
+eventFrame.scripts.OnEvent(eventFrame, "CHALLENGE_MODE_START")
 eventFrame.scripts.OnEvent(eventFrame, "CHALLENGE_MODE_COMPLETED")
-playerScore = 3200
 DrainTimers()
-assert(#chatMessages == 11, "summary without a baseline did not send three lines: " .. #chatMessages)
-assert(chatMessages[9].message == "This run: <100> points | Rank up <~1000>",
-    "baseline-free line 1 was incorrect: " .. tostring(chatMessages[9].message))
-assert(chatMessages[10].message == "Current score <3200> | CN rank <~168000>",
-    "baseline-free line 2 was incorrect: " .. tostring(chatMessages[10].message))
-assert(chatMessages[11].message == "[MythicRankHUD-9.7]",
-    "baseline-free line 3 was incorrect: " .. tostring(chatMessages[11].message))
-dailyBaseline = 2968
-
--- Disabled setting -> silent.
+assert(chatMessages[5].message == "同名: -- +-- | -- +-- | ", "missing score was fabricated: " .. tostring(chatMessages[5].message))
+assert(#chatMessages == 6, "missing score should still get one teammate line")
 announcementEnabled = false
-eventFrame.scripts.OnEvent(eventFrame, "CHALLENGE_MODE_START", "player")
+eventFrame.scripts.OnEvent(eventFrame, "CHALLENGE_MODE_START")
 eventFrame.scripts.OnEvent(eventFrame, "CHALLENGE_MODE_COMPLETED")
-playerScore = 3300
 DrainTimers()
-assert(#chatMessages == 11, "announced while the setting was disabled")
+assert(#chatMessages == 6, "disabled announcement still sent chat")
 announcementEnabled = true
-
--- Zero delay queues the four lines as soon as the completion is handled.
-announceDelay = 0
-eventFrame.scripts.OnEvent(eventFrame, "CHALLENGE_MODE_START", "player")
-eventFrame.scripts.OnEvent(eventFrame, "CHALLENGE_MODE_COMPLETED")
-playerScore = 3310
-DrainTimers()
-assert(#chatMessages == 15, "zero delay did not announce after completion: " .. #chatMessages)
-assert(chatMessages[12].message == "This run: <10> points | Rank up <~100>",
-    "zero delay line 1 was incorrect: " .. tostring(chatMessages[12].message))
-assert(chatMessages[13].message == "Today: <342> points | <~3420> ranks",
-    "zero delay line 2 was incorrect: " .. tostring(chatMessages[13].message))
-assert(chatMessages[14].message == "Current score <3310> | CN rank <~166900>",
-    "zero delay line 3 was incorrect: " .. tostring(chatMessages[14].message))
-assert(chatMessages[15].message == "[MythicRankHUD-9.7]",
-    "zero delay line 4 was incorrect: " .. tostring(chatMessages[15].message))
-announceDelay = 5
-
+runScores.party2 = 3010
 -- The party-join welcome cases count from the summary messages above, so both
 -- their totals and their indices are relative to this baseline.
 local welcomeBase = #chatMessages
@@ -339,17 +345,25 @@ unitGuids["party4"] = nil
 StepTimer()
 assert(#chatMessages == welcomeBase + 5, "greeted a member who had already left")
 
--- Member whose score cannot be read: polling keeps going instead of giving up.
+-- Member whose score is not readable yet: the slow poll keeps running every
+-- retry interval until the score appears or the key starts.
 unitGuids["party4"] = "GUID-NOSCORE"
 unitNames["party4"] = "查不到分"
 unitScores["party4"] = nil
 eventFrame.scripts.OnEvent(eventFrame, "GROUP_ROSTER_UPDATE")
-for _ = 1, 40 do
+for _ = 1, 6 do
     StepTimer()
 end
-assert(#chatMessages == welcomeBase + 5, "announced for a member without readable score")
-assert(StepTimer(), "polling gave up before the run started")
--- The member leaving stops the poll chain.
+assert(#chatMessages == welcomeBase + 5, "greeted a member without a readable score")
+assert(StepTimer(), "polling stopped before the score became readable")
+-- The score appears later; the next poll sends the full welcome.
+unitScores["party4"] = 3100
+StepTimer()
+assert(#chatMessages == welcomeBase + 6, "the welcome was not sent once the score became readable")
+assert(chatMessages[welcomeBase + 6].message == "查不到分 | met 1x this month",
+    "late welcome text was incorrect: " .. tostring(chatMessages[welcomeBase + 6].message))
+assert(not StepTimer(), "polling continued after the welcome was sent")
+-- The member leaving stops any remaining poll chain.
 unitGuids["party4"] = nil
 eventFrame.scripts.OnEvent(eventFrame, "GROUP_ROSTER_UPDATE")
 while StepTimer() do end
@@ -362,7 +376,7 @@ unitNames["party4"] = "静默队友"
 unitScores["party4"] = 2500
 eventFrame.scripts.OnEvent(eventFrame, "GROUP_ROSTER_UPDATE")
 StepTimer()
-assert(#chatMessages == welcomeBase + 5, "announced while the setting was disabled")
+assert(#chatMessages == welcomeBase + 6, "announced while the setting was disabled")
 assert(charDB.encounters["GUID-DISABLED"] == nil, "recorded an encounter while disabled")
 welcomeEnabled = true
 
@@ -370,7 +384,7 @@ welcomeEnabled = true
 raidMode = true
 eventFrame.scripts.OnEvent(eventFrame, "GROUP_ROSTER_UPDATE")
 assert(not StepTimer(), "raid roster scheduled a welcome")
-assert(#chatMessages == welcomeBase + 5, "raid roster announced a welcome")
+assert(#chatMessages == welcomeBase + 6, "raid roster announced a welcome")
 raidMode = false
 
 -- Records older than a month are pruned; recent records stay.
@@ -395,11 +409,11 @@ unitNames["party2"] = "新队友"
 unitScores["party2"] = 3250
 unitGuids["party2"] = "GUID-NEW"
 eventFrame.scripts.OnEvent(eventFrame, "GROUP_ROSTER_UPDATE")
-assert(#chatMessages == welcomeBase + 6, "the month rollover was not announced")
+assert(#chatMessages == welcomeBase + 7, "the month rollover was not announced")
 assert(newRecord.count == 1, "the monthly encounter counter did not reset: " .. tostring(newRecord.count))
-assert(chatMessages[welcomeBase + 6].message
+assert(chatMessages[welcomeBase + 7].message
         == "新队友 | met 1x | no change, push! | last " .. ExpectedMeetTime(firstMeetTime),
-    "month-rollover welcome text was incorrect: " .. tostring(chatMessages[welcomeBase + 6].message))
+    "month-rollover welcome text was incorrect: " .. tostring(chatMessages[welcomeBase + 7].message))
 
 -- A score change after the reset announces the new month count.
 unitGuids["party2"] = nil
@@ -407,10 +421,10 @@ eventFrame.scripts.OnEvent(eventFrame, "GROUP_ROSTER_UPDATE")
 unitScores["party2"] = 3300
 unitGuids["party2"] = "GUID-NEW"
 eventFrame.scripts.OnEvent(eventFrame, "GROUP_ROSTER_UPDATE")
-assert(#chatMessages == welcomeBase + 7, "a changed score after the month reset was not announced")
-assert(chatMessages[welcomeBase + 7].message
+assert(#chatMessages == welcomeBase + 8, "a changed score after the month reset was not announced")
+assert(chatMessages[welcomeBase + 8].message
         == "新队友 | met 2x | up 50 | last " .. ExpectedMeetTime(rolloverTime),
-    "post-reset welcome text was incorrect: " .. tostring(chatMessages[welcomeBase + 7].message))
+    "post-reset welcome text was incorrect: " .. tostring(chatMessages[welcomeBase + 8].message))
 
 -- A score drop is reported as well.
 local scoreChangeTime = serverTime
@@ -419,10 +433,64 @@ eventFrame.scripts.OnEvent(eventFrame, "GROUP_ROSTER_UPDATE")
 unitScores["party2"] = 3280
 unitGuids["party2"] = "GUID-NEW"
 eventFrame.scripts.OnEvent(eventFrame, "GROUP_ROSTER_UPDATE")
-assert(#chatMessages == welcomeBase + 8, "a score drop was not announced")
-assert(chatMessages[welcomeBase + 8].message
+assert(#chatMessages == welcomeBase + 9, "a score drop was not announced")
+assert(chatMessages[welcomeBase + 9].message
         == "新队友 | met 3x | down 20 | last " .. ExpectedMeetTime(scoreChangeTime),
-    "score-drop welcome text was incorrect: " .. tostring(chatMessages[welcomeBase + 8].message))
+    "score-drop welcome text was incorrect: " .. tostring(chatMessages[welcomeBase + 9].message))
+
+-- Several members waiting for scores share one poll timer instead of one
+-- retry chain per teammate.
+local sharedBase = #chatMessages
+unitGuids["party1"] = "GUID-SH1"
+unitGuids["party2"] = "GUID-SH2"
+unitGuids["party3"] = "GUID-SH3"
+unitNames["party1"] = "共享甲"
+unitNames["party2"] = "共享乙"
+unitNames["party3"] = "共享丙"
+unitScores["party1"] = nil
+unitScores["party2"] = nil
+unitScores["party3"] = nil
+eventFrame.scripts.OnEvent(eventFrame, "GROUP_ROSTER_UPDATE")
+assert(#timerQueue == 1, "pending welcomes did not share a single poll timer")
+unitScores["party1"] = 3000
+unitScores["party2"] = 3100
+unitScores["party3"] = 3200
+StepTimer()
+assert(#chatMessages == sharedBase + 3, "the shared poll did not greet every waiting member")
+assert(#timerQueue == 0, "the poll timer survived after every welcome was sent")
+unitGuids["party1"] = nil
+unitGuids["party2"] = nil
+unitGuids["party3"] = nil
+eventFrame.scripts.OnEvent(eventFrame, "GROUP_ROSTER_UPDATE")
+
+-- Applicant score cache: a member who applied through the Group Finder is
+-- greeted immediately with the score the applicant list exposed, even while
+-- the unit rating API still has no data for them.
+local applicantBase = #chatMessages
+_G.C_LFGList = {
+    GetApplicants = function() return { 1 } end,
+    GetApplicantInfo = function() return { numMembers = 1 } end,
+    GetApplicantMemberInfo = function(_, memberIndex)
+        if memberIndex == 1 then
+            -- Applicant member shape: name, class, localizedClass, level,
+            -- itemLevel, honorLevel, tank, healer, damage, assignedRole,
+            -- relationship, dungeonScore.
+            return "缓存队友", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, 3333
+        end
+        return nil
+    end,
+}
+eventFrame.scripts.OnEvent(eventFrame, "LFG_LIST_APPLICANT_UPDATED", 1)
+unitGuids["party3"] = "GUID-CACHE"
+unitNames["party3"] = "缓存队友"
+unitScores["party3"] = nil
+eventFrame.scripts.OnEvent(eventFrame, "GROUP_ROSTER_UPDATE")
+assert(#chatMessages == applicantBase + 1, "the cached applicant score was not used")
+assert(chatMessages[applicantBase + 1].message == "缓存队友 | met 1x this month",
+    "cached welcome text was incorrect: " .. tostring(chatMessages[applicantBase + 1].message))
+assert(#timerQueue == 0, "a cached welcome still scheduled a poll")
+unitGuids["party3"] = nil
+eventFrame.scripts.OnEvent(eventFrame, "GROUP_ROSTER_UPDATE")
 
 -- Starting the run cancels every pending welcome poll and members joining
 -- mid-run are not greeted or recorded.
@@ -434,22 +502,54 @@ assert(StepTimer(), "a pending welcome poll was not scheduled")
 eventFrame.scripts.OnEvent(eventFrame, "CHALLENGE_MODE_START", "player")
 while StepTimer() do end
 assert(not StepTimer(), "a pending welcome poll survived the run start")
-assert(#chatMessages == welcomeBase + 8, "a cancelled poll announced a welcome")
+assert(#chatMessages == welcomeBase + 13, "a cancelled poll announced a welcome")
 unitScores["party4"] = 3400
-assert(#chatMessages == welcomeBase + 8, "a welcome was announced after the run started")
+assert(#chatMessages == welcomeBase + 13, "a welcome was announced after the run started")
 
 unitGuids["party1"] = "GUID-MIDRUN"
 unitNames["party1"] = "中途加入"
 unitScores["party1"] = 3500
 eventFrame.scripts.OnEvent(eventFrame, "GROUP_ROSTER_UPDATE")
 assert(charDB.encounters["GUID-MIDRUN"] == nil, "recorded an encounter during the run")
-assert(#chatMessages == welcomeBase + 8, "greeted a member who joined during the run")
+assert(#chatMessages == welcomeBase + 13, "greeted a member who joined during the run")
 assert(not StepTimer(), "a mid-run join scheduled a welcome poll")
+
+-- Retail chat uses C_ChatInfo even when the deprecated global is absent.
+local legacySender = _G.SendChatMessage
+_G.SendChatMessage = nil
+_G.C_ChatInfo = {
+    InChatMessagingLockdown = function() return false end,
+    SendChatMessage = function(message, channel)
+        chatMessages[#chatMessages + 1] = { message = message, channel = channel }
+    end,
+}
+local sent = namespace.RunSummary.AnnounceMemberWelcome("party1", "GUID-MIDRUN", 3500)
+assert(sent and chatMessages[#chatMessages].message == "中途加入 | met 1x this month",
+    "member welcome required the removed global chat function")
+
+-- A stray pipe is retried with a full-width bar instead of failing with an
+-- "Invalid escape code" chat error.
+local escapeRetry
+_G.C_ChatInfo.SendChatMessage = function(message, channel)
+    if message:find("|", 1, true) then
+        error("SendChatMessage(): Invalid escape code in chat message")
+    end
+    escapeRetry = { message = message, channel = channel }
+end
+local retried, retryReason = namespace.Util.SendPartyMessage("名 | 分")
+assert(retried, "escape retry failed: " .. tostring(retryReason))
+assert(escapeRetry and escapeRetry.message == "名 ｜ 分", "escape retry text mismatch")
+
+_G.C_ChatInfo.InChatMessagingLockdown = function() return true end
+local blocked, reason = namespace.Util.SendPartyMessage("blocked chat")
+assert(not blocked and reason == "chat lockdown", "chat lockdown was not reported")
+_G.C_ChatInfo = nil
+_G.SendChatMessage = legacySender
 
 -- Direct helper sanity checks.
 local summary = namespace.RunSummary
 assert(summary, "RunSummary namespace was not exposed")
-assert(summary.ReadPlayerScore() == 3310, "ReadPlayerScore returned an unexpected value")
+assert(summary.ReadPlayerScore() == 3000, "ReadPlayerScore returned an unexpected value")
 assert(summary.EstimateRankForScore("cn", 3000) == 170000, "rank estimate helper returned an unexpected value")
 assert(summary.ExpandTemplate("hi {unknown}", {}) == "hi {unknown}", "unknown placeholders stay literal")
 assert(summary.ExpandTemplate("100% {score}", { score = 5 }) == "100% 5", "percent signs must not break expansion")

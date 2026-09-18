@@ -41,11 +41,11 @@ local TREND_SHORT_LABELS = {
 }
 
 local TREND_FULL_LABELS = {
-    p999 = "Top 0.1%",
-    p990 = "Top 1%",
-    p900 = "Top 10%",
-    p750 = "Top 25%",
-    p600 = "Top 40%",
+    p999 = L.DETAIL_CUTOFF_01,
+    p990 = L.DETAIL_CUTOFF_1,
+    p900 = L.DETAIL_CUTOFF_10,
+    p750 = L.DETAIL_CUTOFF_25,
+    p600 = L.DETAIL_CUTOFF_40,
 }
 
 local COLUMNS = {
@@ -178,6 +178,12 @@ local function GetRankText(ranking)
     if not ranking.available then
         return "-"
     end
+    if ranking.isRoundedLeaderboardRank and ranking.estimatedRank then
+        if ranking.isRoundedTie then
+            return string.format(L.TOP_TIED_RANK_VALUE, FormatInteger(ranking.estimatedRank))
+        end
+        return string.format(L.APPROX_RANK, FormatInteger(ranking.estimatedRank))
+    end
     if ranking.inTop01 and ranking.topRankMax then
         return string.format(L.TOP_RANK_VALUE, FormatInteger(ranking.topRankMax))
     end
@@ -233,6 +239,12 @@ end
 local function GetRankRangeText(ranking)
     if not ranking.available then
         return "-"
+    end
+    if ranking.isRoundedLeaderboardRank and ranking.rankMin and ranking.rankMax then
+        if ranking.rankMin == ranking.rankMax then
+            return FormatInteger(ranking.rankMin)
+        end
+        return string.format(L.RANGE_JOIN, FormatInteger(ranking.rankMin), FormatInteger(ranking.rankMax))
     end
     if ranking.inTop01 and ranking.topRankMax then
         return string.format(L.TOP_RANK_RANGE_VALUE, FormatInteger(ranking.topRankMax))
@@ -832,7 +844,7 @@ local function ShowTrendTooltip(hitFrame)
     GameTooltip:Show()
 end
 
-local function RefreshCutoffTrendButtons(series)
+local function RefreshCutoffTrendButtons()
     local side = detailFrame.sideUI
     for key, button in pairs(side.trendButtons) do
         local selected = key == side.trendState.cutoffKey
@@ -1001,7 +1013,7 @@ RefreshCutoffTrendUI = function()
     local section = Data.GetCachedSection("cutoffHistory")
     local series = section and section.seriesByKey[side.trendState.cutoffKey] or nil
     local points = GetVisibleTrendPoints(series, side.trendState.periodDays)
-    RefreshCutoffTrendButtons(series)
+    RefreshCutoffTrendButtons()
     RefreshCutoffTrendSummary(series, points)
     RefreshCutoffTrendChart(series, points)
 end
@@ -1086,8 +1098,10 @@ local function RefreshDetailHeader()
     detailFrame.distanceLine.label:SetText(L.DETAIL_DISTANCE_TO_TARGET)
     if smartTarget and smartTarget.progress ~= nil then
         detailFrame.progress:SetValue(smartTarget.progress)
-        local r, g, b = Util.HexColorToRGB(smartTarget.color, GOLD_R, GOLD_G, GOLD_B)
-        detailFrame.progress:SetStatusBarColor(r, g, b, 0.9)
+        if not (ns.IsEUISkinActive and ns.IsEUISkinActive()) then
+            local r, g, b = Util.HexColorToRGB(smartTarget.color, GOLD_R, GOLD_G, GOLD_B)
+            detailFrame.progress:SetStatusBarColor(r, g, b, 0.9)
+        end
         detailFrame.progress:Show()
         detailFrame.progressBackground:Show()
     else

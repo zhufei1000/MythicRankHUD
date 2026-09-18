@@ -16,7 +16,10 @@ $overlay = Join-Path $root "releases/QFXMythicRankHUD"
 $files = @(
     "Core.lua", "EUI.lua", "Locale.lua", "MeetingStoneIntegration.lua", "MythicDetail.lua",
     "MythicDetailData.lua", "MythicDetailResources.lua", "MythicDetailStatistics.lua",
-    "RankTarget.lua", "Region.lua", "RunSummary.lua", "Settings.lua", "Util.lua"
+    "RankTarget.lua", "Region.lua", "RunSummary.lua", "Ceremony.lua", "Settings.lua", "Util.lua",
+    "Media/Ceremony/victory_emblem.png", "Media/Ceremony/defeat_emblem.png",
+    "Media/Ceremony/green_up_arrow_taper_mask.png", "Media/Ceremony/Victory.ogg",
+    "Media/Ceremony/Defeat.ogg"
 )
 
 function Get-TocVersion($tocPath) {

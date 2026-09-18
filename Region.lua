@@ -13,8 +13,6 @@ for _, definition in ipairs(REGIONS) do
     REGION_BY_KEY[definition.key] = definition
 end
 
-ns.REGIONS = REGIONS
-
 -- Current-season fallback names keep the international UI in English even
 -- when the regional data pack is temporarily unavailable. The data pack's
 -- season dungeon metadata remains the primary source so future seasons do not
