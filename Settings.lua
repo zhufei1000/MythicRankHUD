@@ -12,6 +12,7 @@ local backgroundAlphaSlider
 local detailBorderAlphaSlider
 local detailBackgroundAlphaSlider
 local borderChecks = {}
+local appearanceChecks = {}
 local rowChecks = {}
 local refreshingControls = false
 local pendingHUDStyle = false
@@ -167,6 +168,20 @@ local function CreateBorderOption(parent, x, y, key, label)
     return check
 end
 
+-- The window-look choice is reload-bound (frames wear their shell from the
+-- moment they are built), so a pick only saves and points at /reload.
+local function CreateAppearanceOption(parent, x, y, key, label)
+    local check = CreateCheckButton(parent, x, y, label, function()
+        ns.SetAppearanceMode(key)
+        for mode, button in pairs(appearanceChecks) do
+            SetChecked(button, mode == key)
+        end
+        PrintAddonMessage(L.SETTINGS_APPEARANCE_RELOAD_HINT)
+    end, "UIRadioButtonTemplate")
+    appearanceChecks[key] = check
+    return check
+end
+
 local function SetSliderText(slider, text)
     if slider.Text then
         slider.Text:SetText(text)
@@ -269,6 +284,10 @@ local function RefreshControls()
     end
     for key, check in pairs(rowChecks) do
         SetChecked(check, db.showRows[key] ~= false)
+    end
+    local appearanceMode = ns.GetAppearanceMode and ns.GetAppearanceMode() or "auto"
+    for mode, check in pairs(appearanceChecks) do
+        SetChecked(check, appearanceMode == mode)
     end
     for style, check in pairs(borderChecks) do
         SetChecked(check, db.borderStyle == style)
@@ -384,6 +403,15 @@ local function CreateSettingsPanel()
     y = CreateSectionHeader(content, L.SETTINGS_SECTION_APPEARANCE or "Appearance", y, width)
     y = CreateDescription(content, L.SETTINGS_APPEARANCE_DESC, y, width)
     y = y - 2
+    CreateOptionLabel(content, 18, y, L.SETTINGS_APPEARANCE_MODE)
+    y = y - 24
+    CreateAppearanceOption(content, 18, y, "auto", L.SETTINGS_APPEARANCE_AUTO)
+    CreateAppearanceOption(content, 190, y, "addon", L.SETTINGS_APPEARANCE_ADDON)
+    CreateAppearanceOption(content, 330, y, "blizzard", L.SETTINGS_APPEARANCE_BLIZZARD)
+    CreateAppearanceOption(content, 470, y, "classic", L.SETTINGS_APPEARANCE_CLASSIC)
+    y = y - 26
+    y = CreateDescription(content, L.SETTINGS_APPEARANCE_MODE_DESC, y, width)
+    y = y - 10
     CreateOptionLabel(content, 18, y, L.SETTINGS_BORDER_STYLE)
     y = y - 24
     CreateBorderOption(content, 18, y, "transparent", L.SETTINGS_BORDER_TRANSPARENT)

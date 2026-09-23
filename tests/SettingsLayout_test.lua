@@ -117,6 +117,9 @@ for _, key in ipairs({
     "CUTOFF_01", "CUTOFF_1", "SCORE", "SETTINGS_ROW_REGION_RANK", "SURPASSED", "TODAY_SCORE",
     "TODAY_RANK", "SETTINGS_ROW_NEXT_CUTOFF", "RANK_RANGE", "PERCENTILE_RANGE",
     "SETTINGS_ROW_DATA_UPDATED",
+    "SETTINGS_APPEARANCE_MODE", "SETTINGS_APPEARANCE_AUTO", "SETTINGS_APPEARANCE_ADDON",
+    "SETTINGS_APPEARANCE_BLIZZARD", "SETTINGS_APPEARANCE_CLASSIC", "SETTINGS_APPEARANCE_MODE_DESC",
+    "SETTINGS_APPEARANCE_RELOAD_HINT",
     "TELEPORT_ANNOUNCEMENT_FORMAT", "RUN_GAIN_LINE_GAIN", "RUN_GAIN_LINE_NO_GAIN",
     "RUN_GAIN_LINE_TODAY", "RUN_GAIN_LINE_CURRENT", "RUN_GAIN_LINE_AD",
     "WELCOME_TEAMMATE_FORMAT", "WELCOME_CLOSING_FORMAT",
@@ -131,6 +134,8 @@ local namespace = {
     SetHUDShown = function() end,
     SetRowVisible = function() end,
     SetHUDBorderStyle = function() end,
+    GetAppearanceMode = function() return "auto" end,
+    SetAppearanceMode = function() end,
     SetHUDBorderAlpha = function() end,
     SetHUDBackgroundAlpha = function() end,
     SetDetailEnabled = function() end,
@@ -192,7 +197,7 @@ for _, item in ipairs(scripts) do
             "a border color radio option has no label")
     end
 end
-assert(radioCount == 3, "expected 3 border color radio options, found " .. radioCount)
+assert(radioCount == 7, "expected 7 radio options (3 border colors + 4 window looks), found " .. radioCount)
 
 -- The hint is the last control before the reset button and leaves it room to
 -- wrap, which is what the overlap fix is about.

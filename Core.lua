@@ -26,6 +26,7 @@ local DEFAULTS = {
     announceTexts = {},
     ceremony = { enabled = true, sound = true, scale = 1, y = 0, duration = 10 },
     enableMythicDetail = true,
+    appearance = "auto",
     borderStyle = "gold",
     borderAlpha = 0.85,
     backgroundAlpha = 0.88,
@@ -200,6 +201,9 @@ local function InitializeDatabase()
     end
     if db.borderStyle ~= "transparent" and db.borderStyle ~= "class" and db.borderStyle ~= "gold" then
         db.borderStyle = DEFAULTS.borderStyle
+    end
+    if db.appearance ~= "addon" and db.appearance ~= "blizzard" and db.appearance ~= "classic" then
+        db.appearance = DEFAULTS.appearance
     end
     db.detailPoint = VALID_ANCHOR_POINTS[db.detailPoint] and db.detailPoint or DEFAULTS.detailPoint
     db.detailRelativePoint = VALID_ANCHOR_POINTS[db.detailRelativePoint]
@@ -910,6 +914,21 @@ function ns.SetHUDBorderStyle(value)
         value = DEFAULTS.borderStyle
     end
     GetDB().borderStyle = value
+end
+
+-- Window look. "auto" follows EllesmereUI's own Style page; "blizzard" and
+-- "classic" pin the native shells (EUINative.lua); "addon" pins the addon's
+-- own flat style. The look is applied when frames are built, so a change
+-- takes effect after a UI reload.
+function ns.GetAppearanceMode()
+    return GetDB().appearance or DEFAULTS.appearance
+end
+
+function ns.SetAppearanceMode(value)
+    if value ~= "addon" and value ~= "blizzard" and value ~= "classic" then
+        value = DEFAULTS.appearance
+    end
+    GetDB().appearance = value
 end
 
 function ns.SetRowVisible(key, value)

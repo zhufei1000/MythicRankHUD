@@ -13,7 +13,7 @@ World of Warcraft (Midnight) Mythic+ rank HUD. Estimates regional M+ rank and pr
 | 仓库根目录（`MythicRankHUD.toc`） | 国际版（英文界面） | `/myrank` |
 | `releases/QFXMythicRankHUD/`（叠加层） | 中文版（zhCN / zhTW / enUS 本地化） | `/qfxrank` |
 
-当前版本 / Current version: **1.5.0**。
+当前版本 / Current version: **1.6.0**。
 
 ## 安装 / Install
 
@@ -63,6 +63,7 @@ git push origin 1.3.30
 
 ## 更新日志 / Changelog
 
+- **1.6.0** — 新增 EllesmereUI 整体风格适配与设置界面的「窗口外观」选择：默认**跟随 EllesmereUI**（EUI 的「Style」页选择 Blizzard Style / Classic WoW UI 时，HUD 面板与详细窗口自绘对应的暴雪原生外壳——Blizzard 风格用对话框金边、Classic 风格用香草岩石窗口 + 细金边，HUD 面板用暴雪提示框样式；金边保持原生美术，深色底与插件一致，背景透明度仍由滑块控制）；也可固定为**插件自身 / 暴雪原生 / 旧世经典**。外观切换在重载界面后生效（EUI 自身切换风格也要求重载）。
 - **1.5.1** — 修复小队喊话被 12.x 聊天转义校验拒绝的问题（模板里的裸竖线触发 `Invalid escape code in chat message`）：默认文案不再使用 `|`，发送失败时自动改用全角符号重试，并自动清理旧版本固化的模板覆盖。进队欢迎新增组队查找器申请者分数缓存（开组时申请者的分数会用于进队欢迎）与共享慢刷新队列（所有待欢迎队友共用一个 2 秒轮询，读到分数立即发送，插钥匙/离队/关闭时自动停止）；结算喊话改为每位队友一行、0.5 秒间隔并附距下一目标的分数差。适配 WoW 音频编码与 EUI 皮肤。
 - **1.5.0** — 隐藏原版完成横幅；结束喊话改为逐位播报队友成绩，按 GUID 和完整服务器名记录开钥匙前数据，最后发送广告。
 - **1.4.1** — 整合 QFXMythicCeremony 结算界面与音效；结束时显示真实赛季分数、本次加分、已选区域预计排名和本次预计提升名次。

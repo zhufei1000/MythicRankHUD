@@ -606,12 +606,22 @@ local function ApplyBackdrop(frame, alpha)
         end
     end
     local visual = ns.GetHUDVisualSettings and ns.GetHUDVisualSettings() or {}
+    local backgroundAlpha = alpha or visual.backgroundAlpha or 0.92
+    if ns.IsEUINativeActive and ns.IsEUINativeActive() then
+        -- Stock whole-UI look: the native shell is already painted; only its
+        -- opacity follows the slider, the dark fill matches the addon's own
+        -- windows and the border keeps its art.
+        local bgR, bgG, bgB = ns.GetNativeShellBackdropColor and ns.GetNativeShellBackdropColor()
+        frame:SetBackdropColor(bgR or 0.05, bgG or 0.05, bgB or 0.06, backgroundAlpha)
+        frame:SetBackdropBorderColor(1, 1, 1, 1)
+        return
+    end
     frame:SetBackdrop({
         bgFile = "Interface\\Buttons\\WHITE8X8",
         edgeFile = "Interface\\Buttons\\WHITE8X8",
         edgeSize = 1,
     })
-    frame:SetBackdropColor(0.025, 0.025, 0.035, alpha or visual.backgroundAlpha or 0.92)
+    frame:SetBackdropColor(0.025, 0.025, 0.035, backgroundAlpha)
     frame:SetBackdropBorderColor(
         visual.borderR or 0.72,
         visual.borderG or 0.56,

@@ -454,8 +454,18 @@ local function ApplyVisualSettings()
     local borderAlpha = visual and visual.borderAlpha or 1.00
     local backgroundAlpha = visual and visual.backgroundAlpha or 0.90
     local euiActive = ns.IsEUISkinActive and ns.IsEUISkinActive()
+    local nativeActive = ns.IsEUINativeActive and ns.IsEUINativeActive()
     detailFrame.detailBackgroundAlpha = backgroundAlpha
-    if euiActive then
+    if nativeActive then
+        -- Stock whole-UI look: EUINative painted the native shell, so the
+        -- sliders only drive the backdrop opacity; the dark fill matches the
+        -- addon's own windows, the border keeps its art, and the title /
+        -- progress bar use the addon's colors.
+        local bgR, bgG, bgB = ns.GetNativeShellBackdropColor and ns.GetNativeShellBackdropColor()
+        detailFrame:SetBackdropColor(bgR or 0.05, bgG or 0.05, bgB or 0.06, backgroundAlpha)
+        detailFrame:SetBackdropBorderColor(1, 1, 1, 1)
+        detailFrame.progress:SetStatusBarColor(borderR, borderG, borderB, 0.9)
+    elseif euiActive then
         -- EllesmereUI owns the window chrome: the title and the progress bar
         -- follow its live accent / bar-fill colors instead of the sliders.
         local S = ns.GetEUISkin and ns.GetEUISkin()
