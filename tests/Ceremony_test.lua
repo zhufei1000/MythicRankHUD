@@ -130,9 +130,64 @@ assert(ceremonyFrame.scoreRow.delta.text == "0", "zero score gain was hidden")
 assert(ceremonyFrame.scoreRow.arrow.visible == false, "zero gain showed an upward arrow")
 assert(ceremonyFrame.rankRow.delta.text == "~0", "zero rank gain was hidden")
 
+-- Completion data that never matches the local run start (e.g. a lagging
+-- local score cache) must still show the result after the retry window
+-- instead of silently swallowing the whole ceremony.
+timers = {}
+score = 3100
+eventFrame.scripts.OnEvent(eventFrame, "CHALLENGE_MODE_START", 588)
+completionInfo = {
+    mapChallengeModeID = 588, level = 10, time = 1800,
+    onTime = true, practiceRun = false,
+    oldOverallDungeonScore = 3000, newOverallDungeonScore = 3100,
+}
+eventFrame.scripts.OnEvent(eventFrame, "CHALLENGE_MODE_COMPLETED")
+for _ = 1, 8 do
+    StepTimer()
+end
+assert(ceremonyFrame.emblem.texture:find("victory_emblem.png", 1, true),
+    "late completion data did not show the victory image")
+assert(ceremonyFrame.scoreRow.main.text == "Score: 3100",
+    "late completion data did not show the completion score")
+assert(ceremonyFrame.scoreRow.delta.text == "100",
+    "late completion data did not use the completion pre-run score")
+
+-- A previous dungeon result must never select this run's image and sound.
+timers = {}
+local soundCount = #sounds
+eventFrame.scripts.OnEvent(eventFrame, "CHALLENGE_MODE_START", 589)
+completionInfo.mapChallengeModeID = 588
+eventFrame.scripts.OnEvent(eventFrame, "CHALLENGE_MODE_COMPLETED")
+for _ = 1, 8 do StepTimer() end
+assert(#sounds == soundCount, "stale dungeon info played a result sound")
+assert(ceremonyFrame.emblem.texture:find("victory_emblem.png", 1, true),
+    "stale dungeon info replaced the displayed result")
+score = 3032
+
 SlashCmdList.QFXMYTHICCEREMONY("live")
 assert(ceremonyFrame.scoreRow.main.text == "Score: 3032", "live test used sample score")
 assert(ceremonyFrame.scoreRow.delta.visible == false, "live test invented a run gain")
 assert(ceremonyFrame.rankRow.main.text == "Rank: ~169680", "live test used sample rank")
+
+-- The result image and sound are local and must play for every party member;
+-- only the party chat announcements are limited to the elected announcer.
+timers = {}
+ns.Announcer = { IsAnnouncer = function() return false end }
+local announcerSoundCount = #sounds
+score = 3100
+eventFrame.scripts.OnEvent(eventFrame, "CHALLENGE_MODE_START", 590)
+score = 3200
+completionInfo = {
+    mapChallengeModeID = 590, level = 10, time = 2400,
+    onTime = true, practiceRun = false,
+    oldOverallDungeonScore = 3100, newOverallDungeonScore = 3200,
+}
+eventFrame.scripts.OnEvent(eventFrame, "CHALLENGE_MODE_COMPLETED")
+StepTimer()
+assert(ceremonyFrame.emblem.texture:find("victory_emblem.png", 1, true),
+    "a non-announcer lost the result image")
+assert(#sounds == announcerSoundCount + 1,
+    "a non-announcer lost the result sound")
+ns.Announcer = nil
 
 print("Ceremony_test: OK")

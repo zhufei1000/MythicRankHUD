@@ -23,6 +23,7 @@ local DEFAULTS = {
     announceRunGain = true,
     announceMemberJoin = true,
     announceDelay = 5,
+    announceMode = "auto",
     announceTexts = {},
     ceremony = { enabled = true, sound = true, scale = 1, y = 0, duration = 10 },
     enableMythicDetail = true,
@@ -259,6 +260,10 @@ local function GetCharacterKey()
         return "unknown"
     end
     return name .. "-" .. (realm or GetRealmName() or "")
+end
+
+function ns.GetCharacterKey()
+    return GetCharacterKey()
 end
 
 local function GetDateKey()
@@ -844,6 +849,9 @@ end
 
 function ns.SetRunGainAnnouncementEnabled(enabled)
     GetDB().announceRunGain = enabled == true
+    if ns.Announcer and type(ns.Announcer.Refresh) == "function" then
+        ns.Announcer.Refresh(0)
+    end
 end
 
 function ns.IsMemberWelcomeEnabled()
@@ -852,6 +860,9 @@ end
 
 function ns.SetMemberWelcomeEnabled(enabled)
     GetDB().announceMemberJoin = enabled == true
+    if ns.Announcer and type(ns.Announcer.Refresh) == "function" then
+        ns.Announcer.Refresh(0)
+    end
 end
 
 function ns.GetRunAnnounceDelay()
@@ -860,6 +871,27 @@ end
 
 function ns.SetRunAnnounceDelay(value)
     GetDB().announceDelay = Util.ClampNumber(value, 0, 60, DEFAULTS.announceDelay)
+end
+
+-- Announcement mode: "auto" elects a single announcer per party through the
+-- Announcer module, "all" keeps the old everyone-posts behavior, "leader"
+-- restricts announcements to the party leader.
+function ns.GetAnnounceMode()
+    local mode = GetDB().announceMode
+    if mode ~= "all" and mode ~= "leader" then
+        return DEFAULTS.announceMode
+    end
+    return mode
+end
+
+function ns.SetAnnounceMode(value)
+    if value ~= "all" and value ~= "leader" then
+        value = DEFAULTS.announceMode
+    end
+    GetDB().announceMode = value
+    if ns.Announcer and type(ns.Announcer.Refresh) == "function" then
+        ns.Announcer.Refresh(0)
+    end
 end
 
 -- Announcement templates: an empty/nil override falls back to the locale

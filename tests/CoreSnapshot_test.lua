@@ -225,6 +225,8 @@ assert(QFXMythicRankHUDGlobalCharDB.encounters["GUID-MIGRATE"] ~= nil,
 assert(QFXMythicRankHUDGlobalDB.encounters == nil, "account encounter table was not cleared")
 assert(namespace.GetCharacterDB() == QFXMythicRankHUDGlobalCharDB,
     "GetCharacterDB did not return the per-character database")
+assert(namespace.GetCharacterKey() == "Player-1-00000001",
+    "announcer character key did not resolve to the player's GUID")
 
 assert(namespace.GetDB().announceTeleport == false, "teleport announcements are not disabled by default")
 namespace.SetTeleportAnnouncementEnabled(true)

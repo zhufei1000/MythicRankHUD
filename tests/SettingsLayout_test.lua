@@ -120,6 +120,8 @@ for _, key in ipairs({
     "SETTINGS_APPEARANCE_MODE", "SETTINGS_APPEARANCE_AUTO", "SETTINGS_APPEARANCE_ADDON",
     "SETTINGS_APPEARANCE_BLIZZARD", "SETTINGS_APPEARANCE_CLASSIC", "SETTINGS_APPEARANCE_MODE_DESC",
     "SETTINGS_APPEARANCE_RELOAD_HINT",
+    "SETTINGS_ANNOUNCE_MODE", "SETTINGS_ANNOUNCE_MODE_AUTO", "SETTINGS_ANNOUNCE_MODE_ALL",
+    "SETTINGS_ANNOUNCE_MODE_LEADER", "SETTINGS_ANNOUNCE_MODE_DESC",
     "TELEPORT_ANNOUNCEMENT_FORMAT", "RUN_GAIN_LINE_GAIN", "RUN_GAIN_LINE_NO_GAIN",
     "RUN_GAIN_LINE_TODAY", "RUN_GAIN_LINE_CURRENT", "RUN_GAIN_LINE_AD",
     "WELCOME_TEAMMATE_FORMAT", "WELCOME_CLOSING_FORMAT",
@@ -197,7 +199,8 @@ for _, item in ipairs(scripts) do
             "a border color radio option has no label")
     end
 end
-assert(radioCount == 7, "expected 7 radio options (3 border colors + 4 window looks), found " .. radioCount)
+assert(radioCount == 10,
+    "expected 10 radio options (3 border colors + 4 window looks + 3 announcement modes), found " .. radioCount)
 
 -- The hint is the last control before the reset button and leaves it room to
 -- wrap, which is what the overlap fix is about.

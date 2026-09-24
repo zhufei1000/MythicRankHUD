@@ -8,6 +8,46 @@ local DOWN_OFFSET = 20
 local FADE_DURATION = 2
 local ROW_GAP = 12
 local DELTA_GAP = 7
+local MAX_INFO_ATTEMPTS = 8
+
+local PREFIX = "|cffd9b85cQFX Ceremony|r "
+local debugEnabled = false
+
+local function JoinArgs(...)
+    local parts = {}
+    for index = 1, select("#", ...) do
+        parts[#parts + 1] = tostring((select(index, ...)))
+    end
+    return table.concat(parts, " ")
+end
+
+local function DebugPrint(...)
+    if debugEnabled then
+        print(PREFIX .. JoinArgs(...))
+    end
+end
+
+-- Problems that silently swallow the result screen are always reported so a
+-- missing ceremony can be diagnosed from the chat frame.
+local function WarnPrint(...)
+    print(PREFIX .. "|cffff8080" .. JoinArgs(...) .. "|r")
+end
+
+local function DescribeValue(value)
+    local valueType = type(value)
+    if valueType == "nil" then
+        return "nil"
+    end
+    if not Util.IsAccessible(value) then
+        return "<" .. valueType .. ">(secret)"
+    end
+    if valueType == "number" or valueType == "string" or valueType == "boolean" then
+        local ok, text = pcall(tostring, value)
+        local result = ok and text or ("<" .. valueType .. ">")
+        return result
+    end
+    return valueType
+end
 
 local function GetSettings()
     local db = type(ns.GetDB) == "function" and ns.GetDB() or nil
@@ -81,9 +121,22 @@ frame.rankRow = CreateInfoRow(-490)
 
 local resultSerial = 0
 
+-- UIParent:GetHeight() can be restricted on 12.x clients; a secret or failed
+-- read must not abort the whole result screen.
+local function GetScreenHeight()
+    if UIParent and type(UIParent.GetHeight) == "function" then
+        local ok, height = pcall(UIParent.GetHeight, UIParent)
+        local safe = ok and Util.SafeNumber(height) or nil
+        if safe and safe > 0 then
+            return safe
+        end
+    end
+    return 1080
+end
+
 local function ApplyPosition(settings)
     local scale = Util.ClampNumber(settings.scale, 0.5, 1.5, 1) * SIZE_FACTOR
-    local fromTop = math.max(UIParent:GetHeight() * 0.25, frame:GetHeight() * scale * 0.5 + 12) + DOWN_OFFSET
+    local fromTop = math.max(GetScreenHeight() * 0.25, frame:GetHeight() * scale * 0.5 + 12) + DOWN_OFFSET
     frame:ClearAllPoints()
     frame:SetPoint("CENTER", UIParent, "TOP", 0, -fromTop + Util.ClampNumber(settings.y, -1000, 1000, 0))
 end
@@ -132,6 +185,7 @@ end
 local function ShowResult(isVictory, score, scoreDelta, rank, rankDelta, estimatedRank)
     local settings = GetSettings()
     if not settings or settings.enabled == false then
+        DebugPrint("result skipped: ceremony disabled")
         return
     end
 
@@ -156,8 +210,20 @@ local function ShowResult(isVictory, score, scoreDelta, rank, rankDelta, estimat
     frame:Show()
 
     if settings.sound ~= false then
-        PlaySoundFile(MEDIA .. (victory and "Victory.ogg" or "Defeat.ogg"), "Master")
+        local soundPath = MEDIA .. (victory and "Victory.ogg" or "Defeat.ogg")
+        local ok, played = pcall(PlaySoundFile, soundPath, "Master")
+        if not ok then
+            WarnPrint("sound failed: " .. tostring(played))
+        elseif played == false then
+            WarnPrint("sound could not play: " .. soundPath)
+        end
     end
+
+    DebugPrint(string.format(
+        "showing %s score=%s delta=%s rank=%s rankDelta=%s visible=%s",
+        victory and "victory" or "defeat",
+        tostring(score), tostring(scoreDelta), tostring(rank), tostring(rankDelta),
+        tostring(frame:IsShown())))
 
     resultSerial = resultSerial + 1
     local thisResult = resultSerial
@@ -222,37 +288,73 @@ local completionSerial = 0
 local lastCompletionKey
 local lastCompletionAt = 0
 
+local lastCompletionIssue
+
 local function ReadCompletionInfo()
     if not C_ChallengeMode or type(C_ChallengeMode.GetChallengeCompletionInfo) ~= "function" then
+        lastCompletionIssue = "completion API unavailable"
         return nil
     end
     local ok, raw = pcall(C_ChallengeMode.GetChallengeCompletionInfo)
-    local info = ok and Util.SafeTable(raw) or nil
-    local mapID = info and Util.SafeNumber(info.mapChallengeModeID) or nil
-    if not mapID or mapID <= 0 then
+    if not ok then
+        lastCompletionIssue = "completion API error: " .. tostring(raw)
         return nil
     end
+    local info = Util.SafeTable(raw)
+    if not info then
+        lastCompletionIssue = "completion info inaccessible (" .. type(raw) .. ")"
+        return nil
+    end
+    local mapID = Util.SafeNumber(info.mapChallengeModeID)
+    if not mapID or mapID <= 0 then
+        lastCompletionIssue = "completion map ID unavailable"
+        return nil
+    end
+    lastCompletionIssue = nil
     return info
 end
 
+-- The completion API can lag behind the run (or return restricted values) for
+-- a moment after CHALLENGE_MODE_COMPLETED. Keep polling briefly, but never let
+-- a permanently mismatching field swallow the whole result screen: once the
+-- retry window is exhausted the freshest readable completion data is used.
 local function ProcessCompletion(serial, scoreBefore, expectedMapID, infoAttempts, scoreAttempts)
     if serial ~= completionSerial then
         return
     end
     local info = ReadCompletionInfo()
     local oldFromInfo = info and Util.SafeNumber(info.oldOverallDungeonScore) or nil
-    if not info
-        or (expectedMapID and info.mapChallengeModeID ~= expectedMapID)
-        or (scoreBefore and oldFromInfo and math.abs(scoreBefore - oldFromInfo) > 0.2)
-    then
-        if infoAttempts < 8 then
+
+    local staleReason
+    if not info then
+        staleReason = lastCompletionIssue or "completion info unavailable"
+    elseif expectedMapID and Util.SafeNumber(info.mapChallengeModeID) ~= expectedMapID then
+        staleReason = string.format(
+            "completion map %s does not match run start map %s",
+            tostring(info.mapChallengeModeID), tostring(expectedMapID))
+    elseif scoreBefore and oldFromInfo and math.abs(scoreBefore - oldFromInfo) > 0.2 then
+        staleReason = string.format(
+            "completion pre-run score %s does not match run start score %s",
+            tostring(oldFromInfo), tostring(scoreBefore))
+    end
+
+    if staleReason then
+        if infoAttempts < MAX_INFO_ATTEMPTS then
+            DebugPrint("completion info not ready (attempt " .. infoAttempts .. "): " .. staleReason)
             C_Timer.After(0.25, function()
                 ProcessCompletion(serial, scoreBefore, expectedMapID, infoAttempts + 1, scoreAttempts)
             end)
+            return
         end
-        return
+        if not info or (expectedMapID and Util.SafeNumber(info.mapChallengeModeID) ~= expectedMapID) then
+            WarnPrint("no ceremony shown: " .. staleReason)
+            return
+        end
+        WarnPrint("using late completion data: " .. staleReason)
     end
+
     if Util.SafeBoolean(info.practiceRun) == true then
+        DebugPrint("ceremony skipped: practice run")
         return
     end
 
@@ -297,6 +399,9 @@ events:SetScript("OnEvent", function(_, event, mapID)
         completionSerial = completionSerial + 1
         activeMapID = Util.SafeNumber(mapID)
         preRunScore = ReadPlayerScore()
+        DebugPrint(string.format(
+            "run start map=%s preRunScore=%s",
+            tostring(activeMapID), tostring(preRunScore)))
     else
         completionSerial = completionSerial + 1
         local serial = completionSerial
@@ -304,6 +409,7 @@ events:SetScript("OnEvent", function(_, event, mapID)
         local expectedMapID = activeMapID
         preRunScore = nil
         activeMapID = nil
+        DebugPrint("run completed")
         C_Timer.After(0.1, function()
             ProcessCompletion(serial, scoreBefore, expectedMapID, 1, 0)
         end)
@@ -367,6 +473,29 @@ SlashCmdList.QFXMYTHICCEREMONY = function(msg)
         local settings = GetSettings()
         settings.sound = not settings.sound
         print(L.CEREMONY_SOUND .. (settings.sound and "ON" or "OFF"))
+    elseif msg == "debug" then
+        debugEnabled = not debugEnabled
+        print(PREFIX .. "debug " .. (debugEnabled and "ON" or "OFF"))
+    elseif msg == "dump" then
+        local settings = GetSettings()
+        print(PREFIX .. string.format(
+            "enabled=%s sound=%s duration=%s score=%s region=%s",
+            tostring(settings and settings.enabled),
+            tostring(settings and settings.sound),
+            tostring(settings and settings.duration),
+            tostring(ReadPlayerScore()),
+            tostring(type(ns.GetSelectedRegion) == "function" and ns.GetSelectedRegion() or nil)))
+        local info = ReadCompletionInfo()
+        if not info then
+            print(PREFIX .. "completion info: " .. tostring(lastCompletionIssue))
+        else
+            print(PREFIX .. string.format(
+                "completion map=%s level=%s time=%s onTime=%s practice=%s oldScore=%s newScore=%s",
+                DescribeValue(info.mapChallengeModeID), DescribeValue(info.level),
+                DescribeValue(info.time), DescribeValue(info.onTime),
+                DescribeValue(info.practiceRun), DescribeValue(info.oldOverallDungeonScore),
+                DescribeValue(info.newOverallDungeonScore)))
+        end
     elseif msg == "reset" then
         local settings = GetSettings()
         settings.enabled, settings.sound, settings.scale, settings.y, settings.duration = true, true, 1, 0, 10

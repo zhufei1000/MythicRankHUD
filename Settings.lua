@@ -13,6 +13,7 @@ local detailBorderAlphaSlider
 local detailBackgroundAlphaSlider
 local borderChecks = {}
 local appearanceChecks = {}
+local announceModeChecks = {}
 local rowChecks = {}
 local refreshingControls = false
 local pendingHUDStyle = false
@@ -57,6 +58,9 @@ local function PrintDebugInfo()    print(L.ADDON_TITLE)
     local summary = ns.RunSummary
     if summary and type(summary.DescribeAnnounceState) == "function" then
         print(summary.DescribeAnnounceState())
+    end
+    if ns.Announcer and type(ns.Announcer.DescribeState) == "function" then
+        print(ns.Announcer.DescribeState())
     end
 end
 
@@ -165,6 +169,17 @@ local function CreateBorderOption(parent, x, y, key, label)
         ns.ApplyDetailStyle()
     end, "UIRadioButtonTemplate")
     borderChecks[key] = check
+    return check
+end
+
+local function CreateAnnounceModeOption(parent, x, y, key, label)
+    local check = CreateCheckButton(parent, x, y, label, function()
+        ns.SetAnnounceMode(key)
+        for mode, button in pairs(announceModeChecks) do
+            SetChecked(button, mode == key)
+        end
+    end, "UIRadioButtonTemplate")
+    announceModeChecks[key] = check
     return check
 end
 
@@ -288,6 +303,10 @@ local function RefreshControls()
     local appearanceMode = ns.GetAppearanceMode and ns.GetAppearanceMode() or "auto"
     for mode, check in pairs(appearanceChecks) do
         SetChecked(check, appearanceMode == mode)
+    end
+    local announceMode = ns.GetAnnounceMode and ns.GetAnnounceMode() or "auto"
+    for mode, check in pairs(announceModeChecks) do
+        SetChecked(check, announceMode == mode)
     end
     for style, check in pairs(borderChecks) do
         SetChecked(check, db.borderStyle == style)
@@ -473,6 +492,14 @@ local function CreateSettingsPanel()
     -- Announcements ---------------------------------------------------------
     y = CreateSectionHeader(content, L.SETTINGS_ANNOUNCE_TEXTS, y, width)
     y = CreateDescription(content, L.SETTINGS_ANNOUNCE_DESC, y, width)
+
+    CreateOptionLabel(content, 18, y, L.SETTINGS_ANNOUNCE_MODE)
+    y = y - 24
+    CreateAnnounceModeOption(content, 18, y, "auto", L.SETTINGS_ANNOUNCE_MODE_AUTO)
+    CreateAnnounceModeOption(content, 200, y, "all", L.SETTINGS_ANNOUNCE_MODE_ALL)
+    CreateAnnounceModeOption(content, 310, y, "leader", L.SETTINGS_ANNOUNCE_MODE_LEADER)
+    y = y - 26
+    y = CreateDescription(content, L.SETTINGS_ANNOUNCE_MODE_DESC, y, width)
 
     -- One cursor drives the whole section: every control is placed below the
     -- previous one, so a longer label or a wrapped line can never overlap.

@@ -554,4 +554,46 @@ assert(summary.EstimateRankForScore("cn", 3000) == 170000, "rank estimate helper
 assert(summary.ExpandTemplate("hi {unknown}", {}) == "hi {unknown}", "unknown placeholders stay literal")
 assert(summary.ExpandTemplate("100% {score}", { score = 5 }) == "100% 5", "percent signs must not break expansion")
 
+-- Auto mode waits for the HELLO exchange, then checks the elected sender.
+announcementEnabled = false
+eventFrame.scripts.OnEvent(eventFrame, "CHALLENGE_MODE_COMPLETED")
+timerQueue = {}
+for unit in pairs(unitGuids) do unitGuids[unit] = nil end
+eventFrame.scripts.OnEvent(eventFrame, "GROUP_ROSTER_UPDATE")
+local elected = false
+namespace.Announcer = { IsAnnouncer = function() return elected end }
+namespace.GetAnnounceMode = function() return "auto" end
+local autoBase = #chatMessages
+unitGuids.party2 = "GUID-AUTO-SILENT"
+unitNames.party2 = "自动静默"
+unitScores.party2 = 3100
+eventFrame.scripts.OnEvent(eventFrame, "GROUP_ROSTER_UPDATE")
+assert(#chatMessages == autoBase and #timerQueue == 1, "auto welcome did not wait for election")
+StepTimer()
+assert(#chatMessages == autoBase, "non-elected member sent a welcome")
+unitGuids.party2 = nil
+eventFrame.scripts.OnEvent(eventFrame, "GROUP_ROSTER_UPDATE")
+elected = true
+unitGuids.party2 = "GUID-AUTO-ELECTED"
+unitNames.party2 = "自动当选"
+eventFrame.scripts.OnEvent(eventFrame, "GROUP_ROSTER_UPDATE")
+assert(#chatMessages == autoBase, "elected member announced before election settled")
+StepTimer()
+assert(#chatMessages == autoBase + 1, "elected member did not send the welcome")
+
+-- A completion-time non-announcer can become the sender before score polling
+-- finishes; it must keep the run snapshot until the final election check.
+welcomeEnabled = false
+announcementEnabled = true
+elected = false
+timerQueue = {}
+local summaryBase = #chatMessages
+eventFrame.scripts.OnEvent(eventFrame, "CHALLENGE_MODE_START")
+unitScores.party2 = 3120
+eventFrame.scripts.OnEvent(eventFrame, "CHALLENGE_MODE_COMPLETED")
+assert(#timerQueue == 1, "post-run score check was skipped before election settled")
+elected = true
+DrainTimers()
+assert(#chatMessages > summaryBase, "newly elected member lost the run summary")
+
 print("RunSummary_test: OK")

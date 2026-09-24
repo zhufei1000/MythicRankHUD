@@ -748,6 +748,7 @@ end
 local function AnnounceRunMembers(members, generation)
     if run.generation ~= generation or run.active then return end
     if type(ns.IsRunGainAnnouncementEnabled) == "function" and not ns.IsRunGainAnnouncementEnabled() then return end
+    if ns.Announcer and not ns.Announcer.IsAnnouncer("run") then return end
     if type(IsInGroup) == "function" then
         local ok, grouped = pcall(IsInGroup, LE_PARTY_CATEGORY_HOME or 1)
         if not ok or not grouped then return end
@@ -790,6 +791,7 @@ end
 SchedulePostRunCheck = function()
     if not run.active then return end
     run.active = false
+    -- Elect at send time: peer HELLO messages may arrive after completion.
     local generation = run.generation
     local members = run.members
     if #members == 0 then return end
@@ -929,6 +931,9 @@ ProcessPendingWelcomes = function()
             elseif not IsWelcomeEligible() then
                 pendingWelcomes[guid] = nil
                 lastWelcomeIssue = "welcome disabled"
+            elseif ns.Announcer and not ns.Announcer.IsAnnouncer("welcome") then
+                pendingWelcomes[guid] = nil
+                lastWelcomeIssue = "not announcer"
             elseif IsCombatLocked() then
                 lastWelcomeIssue = "combat lockdown"
             else
@@ -1027,10 +1032,13 @@ local function RefreshRoster(announceNew)
             -- update can still greet them.
         end
     end
-    -- Attempt every queued welcome once right away (an already readable score
-    -- greets immediately); the shared poll retries the rest.
+    -- In auto mode, let the HELLO exchange settle before electing the sender.
     if next(pendingWelcomes) ~= nil then
-        ProcessPendingWelcomes()
+        if ns.Announcer and ns.GetAnnounceMode and ns.GetAnnounceMode() == "auto" then
+            ScheduleWelcomePoll()
+        else
+            ProcessPendingWelcomes()
+        end
     end
 end
 
