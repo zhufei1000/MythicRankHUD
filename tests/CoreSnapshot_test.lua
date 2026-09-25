@@ -142,7 +142,9 @@ local L = setmetatable({
     PERCENTILE_RANGE = "Percentile",
     UNAVAILABLE = "Unavailable",
     REGION_RANK_FORMAT = "%s Rank",
+    TOP_EXACT_RANK_VALUE = "leaderboard #%s",
     TOP_TIED_RANK_VALUE = "tied #%s",
+    APPROX_RANK_WITH_MARGIN = "~#%s (±%s)",
     RANGE_JOIN = "%s-%s",
     DATA_DATE_FORMAT = "%04d-%02d-%02d",
     DATA_UPDATED = "Updated: %s",
@@ -254,6 +256,42 @@ end
 local topSnapshot = namespace.GetHUDSnapshot(true)
 assert(topSnapshot.rank.value == "tied #5", "rounded leaderboard tie was not displayed")
 assert(topSnapshot.rankRange.value == "5-20", "rounded leaderboard tie range was not displayed")
+
+QFXMythicRankData.EstimatePlayerRank = function()
+    return {
+        bracket = "p999", estimatedRank = 8, rankMin = 8, rankMax = 8,
+        isExactLeaderboardRank = true,
+    }
+end
+local exactSnapshot = namespace.GetHUDSnapshot(true)
+assert(exactSnapshot.rank.value == "leaderboard #8", "Top 100 identity rank was not displayed")
+assert(exactSnapshot.rankRange.value == "8", "Top 100 rank range was not exact")
+
+QFXMythicRankData.GetPlayerScore = function() return 3900 end
+QFXMythicRankData.EstimatePlayerRank = function()
+    return {
+        bracket = "p999-p990", estimatedRank = 80, rankMin = 80, rankMax = 80,
+        isExactLeaderboardRank = true,
+    }
+end
+local outsideTop01Snapshot = namespace.GetHUDSnapshot(true)
+assert(outsideTop01Snapshot.rank.value == "leaderboard #80",
+    "Top 100 identity rank outside the Top 0.1% was not displayed")
+
+QFXMythicRankData.GetPlayerScore = function() return 3500 end
+QFXMythicRankData.EstimatePlayerRank = nil
+QFXMythicRankData.EstimateRank = function()
+    return {
+        bracket = "p999-p990", estimatedRank = 1051,
+        rankMin = 1001, rankMax = 1100, rankUncertainty = 50,
+        isRoundedLeaderboardRank = true, isRoundedTie = true,
+    }
+end
+local groupedSnapshot = namespace.GetHUDSnapshot(true)
+assert(groupedSnapshot.rank.value == "~#1051 (±50)",
+    "rounded score group did not show its middle rank and uncertainty")
+assert(groupedSnapshot.rankRange.value == "1001-1100",
+    "rounded score group did not retain its full rank range")
 
 for _, frame in ipairs(createdFrames) do
     assert(frame.name ~= "QFXMythicRankHUDGlobalFrame", "retired standalone HUD frame was created")

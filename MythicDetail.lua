@@ -178,7 +178,14 @@ local function GetRankText(ranking)
     if not ranking.available then
         return "-"
     end
+    if ranking.isExactLeaderboardRank and ranking.estimatedRank then
+        return string.format(L.TOP_EXACT_RANK_VALUE, FormatInteger(ranking.estimatedRank))
+    end
     if ranking.isRoundedLeaderboardRank and ranking.estimatedRank then
+        if ranking.rankUncertainty and ranking.rankUncertainty > 0 then
+            return string.format(L.APPROX_RANK_WITH_MARGIN,
+                FormatInteger(ranking.estimatedRank), FormatInteger(ranking.rankUncertainty))
+        end
         if ranking.isRoundedTie then
             return string.format(L.TOP_TIED_RANK_VALUE, FormatInteger(ranking.estimatedRank))
         end
@@ -239,6 +246,9 @@ end
 local function GetRankRangeText(ranking)
     if not ranking.available then
         return "-"
+    end
+    if ranking.isExactLeaderboardRank and ranking.estimatedRank then
+        return FormatInteger(ranking.estimatedRank)
     end
     if ranking.isRoundedLeaderboardRank and ranking.rankMin and ranking.rankMax then
         if ranking.rankMin == ranking.rankMax then
@@ -1066,8 +1076,10 @@ local function RefreshDetailHeader()
     local unavailableText = regionLabel and string.format(L.DETAIL_REGION_DATA_UNAVAILABLE, regionLabel)
         or L.DETAIL_DATA_UNAVAILABLE
     detailFrame.rankDataStatus:SetText(ranking.available and "" or unavailableText)
+    local rankLabelKey = ranking.isExactLeaderboardRank
+        and "DETAIL_LEADERBOARD_REGION_RANK" or "DETAIL_ESTIMATED_REGION_RANK"
     detailFrame.rankLine.label:SetText(regionLabel
-        and string.format(L.DETAIL_ESTIMATED_REGION_RANK, regionLabel)
+        and string.format(L[rankLabelKey], regionLabel)
         or L.SETTINGS_ROW_REGION_RANK)
     detailFrame.sideUI.trendTitle:SetText(regionLabel
         and string.format(L.DETAIL_CUTOFF_TRENDS_FORMAT, regionLabel)

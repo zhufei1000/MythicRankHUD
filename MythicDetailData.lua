@@ -183,7 +183,9 @@ local function BuildRanking(score)
         end
     end
 
-    local result = SafeTable(API:EstimateRank(region, score, "all"))
+    local result = type(API.EstimatePlayerRank) == "function"
+        and SafeTable(API:EstimatePlayerRank(region, "all"))
+        or SafeTable(API:EstimateRank(region, score, "all"))
     if not result then
         return ranking
     end
@@ -194,8 +196,10 @@ local function BuildRanking(score)
     ranking.estimatedRank = SafeNumber(result.estimatedRank)
     ranking.rankMin = SafeNumber(result.rankMin)
     ranking.rankMax = SafeNumber(result.rankMax)
+    ranking.rankUncertainty = SafeNumber(result.rankUncertainty)
     ranking.percentileMin = SafeNumber(result.percentileMin)
     ranking.percentileMax = SafeNumber(result.percentileMax)
+    ranking.isExactLeaderboardRank = result.isExactLeaderboardRank == true
     ranking.isRoundedLeaderboardRank = result.isRoundedLeaderboardRank == true
     ranking.isRoundedTie = result.isRoundedTie == true
     local extendedEstimate
@@ -218,11 +222,31 @@ local function BuildRanking(score)
     ranking.smartTarget = RankTarget.Resolve(score, smartCutoffs, BuildAchievementTargets(API, region))
 
     local topTarget = cutoffByKey.p999
-    ranking.inTop01 = ranking.isRoundedLeaderboardRank or score >= topTarget.score
+    ranking.inTop01 = score >= topTarget.score
+    local hasMappedRank = ranking.isExactLeaderboardRank or ranking.isRoundedLeaderboardRank
+    if hasMappedRank then
+        local cutoffRank = topTarget.value and SafeNumber(topTarget.value.rank)
+        ranking.inTop01 = cutoffRank and ranking.estimatedRank
+            and ranking.estimatedRank <= cutoffRank or false
+    end
     if ranking.inTop01 then
         ranking.bracketKind = "top"
         ranking.topRankMax = ranking.rankMax or SafeNumber(topTarget.value.rank)
-        ranking.surpassedAtLeast = 99.9
+        if not hasMappedRank then
+            ranking.surpassedAtLeast = 99.9
+        end
+    elseif hasMappedRank then
+        for index = 1, #cutoffs - 1 do
+            local high = cutoffs[index]
+            local low = cutoffs[index + 1]
+            local lowRank = low.value and SafeNumber(low.value.rank)
+            if lowRank and ranking.estimatedRank <= lowRank then
+                ranking.bracketKind = "between"
+                ranking.bracketLow = high.percent
+                ranking.bracketHigh = low.percent
+                break
+            end
+        end
     elseif score < cutoffByKey.p600.score then
         if extendedEstimate then
             ranking.bracketKind = "between"

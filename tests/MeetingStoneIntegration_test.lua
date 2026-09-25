@@ -307,7 +307,7 @@ assert(integration.seasonBar.resourceItems[7].resource.key == "manaflux", "manaf
 assert(integration.updateNotice:IsShown(), "database update notice was not shown")
 assert(integration.updateNotice.width == integration.sidePanel.width, "database notice width does not match the side panel")
 assert(integration.updateNotice.height == integration.seasonBar.height, "database notice height does not match the season bar")
-local expectedNotice = "Database plugins update daily at 04:04 and 16:16 in each region's local time. Keep them current."
+local expectedNotice = "Database plugins start updating daily at 06:18 local time in each region and are published when ready. Keep them current."
 assert(integration.updateNotice.body.text == expectedNotice,
     "database update notice text is incorrect")
 integration.updateNotice.closeButton.scripts.OnClick(integration.updateNotice.closeButton)

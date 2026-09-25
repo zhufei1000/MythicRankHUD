@@ -501,6 +501,7 @@ local function GetAPICapabilityMask(API)
     if type(API.GetCutoff) == "function" then mask = mask + 2 end
     if type(API.GetPlayerScore) == "function" then mask = mask + 4 end
     if type(API.EstimateRank) == "function" then mask = mask + 8 end
+    if type(API.EstimatePlayerRank) == "function" then mask = mask + 16 end
     return tostring(mask)
 end
 
@@ -589,7 +590,9 @@ local function RefreshHUDData(force)
         return
     end
 
-    local result = Util.SafeTable(API:EstimateRank(region, score, "all"))
+    local result = type(API.EstimatePlayerRank) == "function"
+        and Util.SafeTable(API:EstimatePlayerRank(region, "all"))
+        or Util.SafeTable(API:EstimateRank(region, score, "all"))
     if not result then
         SetUnavailable()
         return
@@ -602,6 +605,7 @@ local function RefreshHUDData(force)
     local estimatedRank = Util.SafeNumber(result.estimatedRank)
     local rankMin = Util.SafeNumber(result.rankMin)
     local rankMax = Util.SafeNumber(result.rankMax)
+    local rankUncertainty = Util.SafeNumber(result.rankUncertainty)
     local percentileMin = Util.SafeNumber(result.percentileMin)
     local percentileMax = Util.SafeNumber(result.percentileMax)
     local extendedEstimate
@@ -623,11 +627,21 @@ local function RefreshHUDData(force)
             and Util.SafeNumber(baselineExtendedEstimate.estimatedRank) or nil
     end
     local baselineBracket = baselineResult and Util.SafeString(baselineResult.bracket) or nil
+    local hasExactTopRank = result.isExactLeaderboardRank == true
     local hasRoundedTopRank = result.isRoundedLeaderboardRank == true
     local baselineHasRoundedTopRank = baselineResult and baselineResult.isRoundedLeaderboardRank == true
     local currentTop01 = hasRoundedTopRank or score >= cutoff01Score or resultBracket == "p999"
+    if hasExactTopRank or hasRoundedTopRank then
+        local cutoffRank = Util.SafeNumber(cutoff01.rank)
+        currentTop01 = cutoffRank and estimatedRank and estimatedRank <= cutoffRank or false
+    end
     local baselineTop01 = baselineScore >= cutoff01Score
         or baselineBracket == "p999" or baselineHasRoundedTopRank
+    if baselineHasRoundedTopRank then
+        local cutoffRank = Util.SafeNumber(cutoff01.rank)
+        baselineTop01 = cutoffRank and baselineEstimatedRank
+            and baselineEstimatedRank <= cutoffRank or false
+    end
     local topRankMax = rankMax or Util.SafeNumber(cutoff01.rank)
     local topPercentile = percentileMax or Util.SafeNumber(cutoff01.percentile) or 0.1
 
@@ -647,9 +661,18 @@ local function RefreshHUDData(force)
     end
     SetRow(rows.todayScore, L.TODAY_SCORE, string.format(L.SCORE_POINTS, scoreGainText), gainR, gainG, gainB)
 
-    if hasRoundedTopRank and estimatedRank then
-        local value = result.isRoundedTie and string.format(L.TOP_TIED_RANK_VALUE, FormatInteger(estimatedRank))
-            or string.format(L.APPROX_RANK, FormatCompactRank(estimatedRank))
+    if hasExactTopRank and estimatedRank then
+        SetRow(rows.rank, rankLabel, string.format(L.TOP_EXACT_RANK_VALUE, FormatInteger(estimatedRank)), 1, 0.82, 0)
+    elseif hasRoundedTopRank and estimatedRank then
+        local value
+        if rankUncertainty and rankUncertainty > 0 then
+            value = string.format(L.APPROX_RANK_WITH_MARGIN,
+                FormatInteger(estimatedRank), FormatInteger(rankUncertainty))
+        elseif result.isRoundedTie then
+            value = string.format(L.TOP_TIED_RANK_VALUE, FormatInteger(estimatedRank))
+        else
+            value = string.format(L.APPROX_RANK, FormatCompactRank(estimatedRank))
+        end
         SetRow(rows.rank, rankLabel, value, 1, 0.82, 0)
     elseif currentTop01 and topRankMax then
         SetRow(rows.rank, rankLabel, string.format(L.TOP_RANK_VALUE, FormatInteger(topRankMax)), 1, 0.82, 0)
@@ -663,7 +686,7 @@ local function RefreshHUDData(force)
     end
 
     local population = Util.SafeNumber(metadata.population)
-    if hasRoundedTopRank and estimatedRank and population and population > 0 then
+    if (hasExactTopRank or hasRoundedTopRank) and estimatedRank and population and population > 0 then
         local surpassed = math.max(0, math.min(100, 100 - (estimatedRank / population * 100)))
         SetRow(rows.surpassed, L.SURPASSED, string.format(L.APPROX, string.format("%.1f%%", surpassed)), 0.45, 0.85, 1)
     elseif currentTop01 then
@@ -764,7 +787,9 @@ local function RefreshHUDData(force)
         SetRow(rows.toTop25, L.SMART_NEXT_TARGET, "--", 0.65, 0.65, 0.65)
     end
 
-    if hasRoundedTopRank and rankMin and rankMax then
+    if hasExactTopRank and estimatedRank then
+        SetRow(rows.rankRange, L.RANK_RANGE, FormatInteger(estimatedRank), 0.82, 0.82, 0.82)
+    elseif hasRoundedTopRank and rankMin and rankMax then
         local value = rankMin == rankMax and FormatInteger(rankMin)
             or string.format(L.RANGE_JOIN, FormatInteger(rankMin), FormatInteger(rankMax))
         SetRow(rows.rankRange, L.RANK_RANGE, value, 0.82, 0.82, 0.82)

@@ -35,7 +35,7 @@ local TEXT = IS_ZH_CN and {
     dataPackInstall = "请安装并启用：%s",
     dataPackPurpose = "分数、排名与分数线由该插件提供",
     updateNoticeTitle = "数据库说明",
-    updateNoticeBody = "数据库插件按各区当地时间每天 04:04、16:16 更新，请保持数据库的新鲜",
+    updateNoticeBody = "数据库插件每天按各区当地时间早上 06:18 开始更新，完成后发布，请及时更新数据库插件",
 } or {
     combinedTitle = "Mythic+ Info",
     score = "Mythic+ Score",
@@ -53,7 +53,7 @@ local TEXT = IS_ZH_CN and {
     dataPackInstall = "Install and enable: %s",
     dataPackPurpose = "This plugin provides scores, ranks, and cutoffs",
     updateNoticeTitle = "Database Notice",
-    updateNoticeBody = "Database plugins update daily at 04:04 and 16:16 in each region's local time. Keep them current.",
+    updateNoticeBody = "Database plugins start updating daily at 06:18 local time in each region and are published when ready. Keep them current.",
 }
 
 -- The regional build shows the client's Chinese dungeon names; these short
