@@ -186,10 +186,7 @@ local banner = {
 }
 _G.ChallengeModeCompleteBanner = banner
 eventFrame.scripts.OnEvent(eventFrame, "CHALLENGE_MODE_COMPLETED")
-assert(not banner.shown and type(banner.OnShow) == "function", "Blizzard completion banner was not suppressed")
-banner.shown = true
-banner.OnShow(banner)
-assert(not banner.shown, "a later Blizzard banner show was not suppressed")
+assert(banner.shown and banner.OnShow == nil, "Blizzard completion banner was modified")
 DrainTimers()
 assert(#chatMessages == 3, "expected two teammate lines and one ad")
 assert(chatMessages[1].message == "同名: 3010 +10 | 169900 +100 | top 10% in 190 pts", "first teammate result mismatch")

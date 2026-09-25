@@ -7,6 +7,7 @@ local announceDelaySlider
 local announceChecks = {}
 local templateBoxes = {}
 local detailCheck
+local ceremonyUnlockCheck
 local borderAlphaSlider
 local backgroundAlphaSlider
 local detailBorderAlphaSlider
@@ -297,6 +298,9 @@ local function RefreshControls()
     if detailCheck then
         SetChecked(detailCheck, db.enableMythicDetail ~= false)
     end
+    if ceremonyUnlockCheck and ns.Ceremony then
+        SetChecked(ceremonyUnlockCheck, ns.Ceremony.IsUnlocked())
+    end
     for key, check in pairs(rowChecks) do
         SetChecked(check, db.showRows[key] ~= false)
     end
@@ -488,6 +492,15 @@ local function CreateSettingsPanel()
         end
     end)
     y = y - 46
+
+    -- Mythic+ completion image ---------------------------------------------
+    y = CreateSectionHeader(content, L.SETTINGS_SECTION_CEREMONY, y, width)
+    ceremonyUnlockCheck = CreateCheckButton(content, 18, y, L.SETTINGS_CEREMONY_UNLOCK, function(checked)
+        ns.Ceremony.SetUnlocked(checked)
+    end)
+    y = y - 26
+    y = CreateDescription(content, L.SETTINGS_CEREMONY_UNLOCK_DESC, y, width)
+    y = y - 12
 
     -- Announcements ---------------------------------------------------------
     y = CreateSectionHeader(content, L.SETTINGS_ANNOUNCE_TEXTS, y, width)

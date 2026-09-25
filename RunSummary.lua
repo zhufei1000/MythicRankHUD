@@ -1043,20 +1043,9 @@ local function RefreshRoster(announceNew)
 end
 
 local eventFrame = CreateFrame("Frame")
-local bannerSuppressed = false
-local function SuppressBlizzardCompletionBanner()
-    local banner = _G.ChallengeModeCompleteBanner
-    if not banner then return end
-    if not bannerSuppressed and type(banner.HookScript) == "function" then
-        banner:HookScript("OnShow", function(self) self:Hide() end)
-        bannerSuppressed = true
-    end
-    if type(banner.Hide) == "function" then banner:Hide() end
-end
 
 eventFrame:RegisterEvent("CHALLENGE_MODE_START")
 eventFrame:RegisterEvent("CHALLENGE_MODE_COMPLETED")
-eventFrame:RegisterEvent("ADDON_LOADED")
 eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 eventFrame:RegisterEvent("GROUP_ROSTER_UPDATE")
 eventFrame:RegisterEvent("LFG_LIST_APPLICANT_UPDATED")
@@ -1070,10 +1059,7 @@ eventFrame:SetScript("OnEvent", function(_, event)
         pollGeneration = pollGeneration + 1
         ClearPendingWelcomes()
     elseif event == "CHALLENGE_MODE_COMPLETED" then
-        SuppressBlizzardCompletionBanner()
         SchedulePostRunCheck()
-    elseif event == "ADDON_LOADED" then
-        SuppressBlizzardCompletionBanner()
     elseif event == "PLAYER_ENTERING_WORLD" then
         RefreshRoster(false)
     elseif event == "GROUP_ROSTER_UPDATE" then

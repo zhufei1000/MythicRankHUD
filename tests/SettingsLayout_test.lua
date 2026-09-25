@@ -103,6 +103,7 @@ local L = {}
 for _, key in ipairs({
     "ADDON_TITLE", "SETTINGS_SHOW_HUD", "SETTINGS_SHOW_HUD_DESC", "SETTINGS_VISIBLE_ROWS",
     "SETTINGS_VISIBLE_ROWS_DESC", "SETTINGS_SECTION_HUD", "SETTINGS_SECTION_APPEARANCE",
+    "SETTINGS_SECTION_CEREMONY", "SETTINGS_CEREMONY_UNLOCK", "SETTINGS_CEREMONY_UNLOCK_DESC",
     "SETTINGS_APPEARANCE_DESC", "SETTINGS_ANNOUNCE_DESC", "SETTINGS_BORDER_STYLE",
     "SETTINGS_BORDER_TRANSPARENT", "SETTINGS_BORDER_GOLD", "SETTINGS_BORDER_CLASS",
     "SETTINGS_BORDER_ALPHA", "SETTINGS_BACKGROUND_ALPHA", "SETTINGS_DETAIL_GROUP",
@@ -131,6 +132,10 @@ end
 
 local namespace = {
     L = L,
+    Ceremony = {
+        IsUnlocked = function() return _G.ceremonyUnlocked == true end,
+        SetUnlocked = function(value) _G.ceremonyUnlocked = value end,
+    },
     GetDB = function() return db end,
     GetSelectedRegionLabel = function() return "国服" end,
     SetHUDShown = function() end,
@@ -163,6 +168,20 @@ assert(loadfile(modulePath))("QFXMythicRankHUD", namespace)
 namespace.InitializeSettings()
 assert(_G.createdPanel, "the settings panel was not registered")
 _G.createdPanel.scripts.OnShow() -- builds the controls exactly like opening it
+
+local ceremonyCheck
+for _, item in ipairs(scripts) do
+    if item.text == "SETTINGS_CEREMONY_UNLOCK" then ceremonyCheck = item end
+end
+assert(ceremonyCheck and ceremonyCheck.checked == false, "ceremony unlock checkbox missing or checked by default")
+ceremonyCheck:SetChecked(true)
+ceremonyCheck.scripts.OnClick(ceremonyCheck)
+assert(_G.ceremonyUnlocked == true, "checkbox did not unlock the ceremony image")
+_G.createdPanel.scripts.OnShow()
+assert(ceremonyCheck.checked == true, "checkbox did not reflect current unlock state")
+ceremonyCheck:SetChecked(false)
+ceremonyCheck.scripts.OnClick(ceremonyCheck)
+assert(_G.ceremonyUnlocked == false, "checkbox did not lock the ceremony image")
 
 -- The three announcement switches must sit in the templates section (left
 -- column, below it), not up in the top-right HUD area.

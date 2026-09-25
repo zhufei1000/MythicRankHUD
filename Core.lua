@@ -17,6 +17,9 @@ local DEFAULT_ROW_VISIBILITY = {
     percentileRange = false,
 }
 
+local CEREMONY_DEFAULT_X = -1.110935236012978
+local CEREMONY_DEFAULT_Y = 274.444395477572
+
 local DEFAULTS = {
     showHUD = true,
     announceTeleport = false,
@@ -25,7 +28,7 @@ local DEFAULTS = {
     announceDelay = 5,
     announceMode = "auto",
     announceTexts = {},
-    ceremony = { enabled = true, sound = true, scale = 1, y = 0, duration = 10 },
+    ceremony = { enabled = true, sound = true, scale = 1, x = CEREMONY_DEFAULT_X, y = CEREMONY_DEFAULT_Y, duration = 10 },
     enableMythicDetail = true,
     appearance = "auto",
     borderStyle = "gold",
@@ -41,6 +44,10 @@ local DEFAULTS = {
     characters = {},
     selectedRegion = nil,
 }
+
+function ns.GetCeremonyDefaultPosition()
+    return CEREMONY_DEFAULT_X, CEREMONY_DEFAULT_Y
+end
 
 local ROW_ORDER = {
     "dataUpdated",

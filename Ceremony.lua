@@ -4,11 +4,9 @@ local Util = ns.Util
 local MEDIA = "Interface\\AddOns\\" .. ADDON_NAME .. "\\Media\\Ceremony\\"
 
 local SIZE_FACTOR = 0.72
-local DOWN_OFFSET = 20
 local FADE_DURATION = 2
 local ROW_GAP = 12
 local DELTA_GAP = 7
-local MAX_INFO_ATTEMPTS = 8
 
 local PREFIX = "|cffd9b85cQFX Ceremony|r "
 local debugEnabled = false
@@ -78,8 +76,10 @@ end
 
 local frame = CreateFrame("Frame", ADDON_NAME .. "CeremonyFrame", UIParent)
 frame:SetSize(600, 580)
-frame:SetFrameStrata("HIGH")
+frame:SetFrameStrata("LOW")
 frame:SetFrameLevel(120)
+frame:SetMovable(true)
+frame:RegisterForDrag("LeftButton")
 frame:EnableMouse(false)
 frame:EnableMouseWheel(false)
 frame:Hide()
@@ -120,25 +120,67 @@ frame.scoreRow = CreateInfoRow(-430)
 frame.rankRow = CreateInfoRow(-490)
 
 local resultSerial = 0
+local unlocked = false
 
--- UIParent:GetHeight() can be restricted on 12.x clients; a secret or failed
--- read must not abort the whole result screen.
-local function GetScreenHeight()
-    if UIParent and type(UIParent.GetHeight) == "function" then
-        local ok, height = pcall(UIParent.GetHeight, UIParent)
-        local safe = ok and Util.SafeNumber(height) or nil
-        if safe and safe > 0 then
-            return safe
-        end
-    end
-    return 1080
-end
+local GetDefaultPosition = ns.GetCeremonyDefaultPosition
 
 local function ApplyPosition(settings)
-    local scale = Util.ClampNumber(settings.scale, 0.5, 1.5, 1) * SIZE_FACTOR
-    local fromTop = math.max(GetScreenHeight() * 0.25, frame:GetHeight() * scale * 0.5 + 12) + DOWN_OFFSET
+    local defaultX, defaultY = GetDefaultPosition()
     frame:ClearAllPoints()
-    frame:SetPoint("CENTER", UIParent, "TOP", 0, -fromTop + Util.ClampNumber(settings.y, -1000, 1000, 0))
+    frame:SetPoint("TOP", UIParent, "CENTER",
+        Util.ClampNumber(settings.x, -2000, 2000, defaultX),
+        Util.ClampNumber(settings.y, -2000, 2000, defaultY))
+end
+
+local dragStartX, dragStartY
+frame:SetScript("OnDragStart", function(self)
+    if not unlocked or type(GetCursorPosition) ~= "function" then return end
+    if type(InCombatLockdown) == "function" and InCombatLockdown() then return end
+    local ok, x, y = pcall(GetCursorPosition)
+    x, y = ok and Util.SafeNumber(x), ok and Util.SafeNumber(y)
+    if not x or not y then return end
+    dragStartX, dragStartY = x, y
+    self:StartMoving()
+    self:SetUserPlaced(false)
+end)
+
+frame:SetScript("OnDragStop", function(self)
+    if not dragStartX then return end
+    self:StopMovingOrSizing()
+    self:SetUserPlaced(false)
+    local settings = GetSettings()
+    local ok, x, y = pcall(GetCursorPosition)
+    local scaleOK, scale = pcall(UIParent.GetEffectiveScale, UIParent)
+    x, y = ok and Util.SafeNumber(x), ok and Util.SafeNumber(y)
+    scale = scaleOK and Util.SafeNumber(scale) or nil
+    if settings and x and y and scale and scale > 0 then
+        settings.x = Util.ClampNumber((settings.x or 0) + (x - dragStartX) / scale, -2000, 2000, 0)
+        settings.y = Util.ClampNumber((settings.y or 0) + (y - dragStartY) / scale, -2000, 2000, 0)
+    end
+    dragStartX, dragStartY = nil, nil
+    if settings then ApplyPosition(settings) end
+end)
+
+local function SetUnlocked(value)
+    local settings = GetSettings()
+    if not settings then return end
+    unlocked = value
+    resultSerial = resultSerial + 1
+    frame:SetScript("OnUpdate", nil)
+    frame:EnableMouse(value)
+    if value then
+        frame.emblem:SetTexture(MEDIA .. "victory_emblem.png")
+        frame.scoreRow:Hide()
+        frame.rankRow:Hide()
+        frame:SetScale(Util.ClampNumber(settings.scale, 0.5, 1.5, 1) * SIZE_FACTOR)
+        ApplyPosition(settings)
+        frame:SetAlpha(1)
+        frame:Show()
+        print(PREFIX .. L.CEREMONY_UNLOCKED)
+    else
+        frame:Hide()
+        print(PREFIX .. L.CEREMONY_LOCKED)
+    end
 end
 
 local function SetRow(row, label, value, delta, formatter, estimated)
@@ -226,6 +268,7 @@ local function ShowResult(isVictory, score, scoreDelta, rank, rankDelta, estimat
         tostring(frame:IsShown())))
 
     resultSerial = resultSerial + 1
+    if unlocked then return end
     local thisResult = resultSerial
     local duration = Util.ClampNumber(settings.duration, 0.1, 60, 10)
     local fadeDuration = math.min(FADE_DURATION, duration)
@@ -255,7 +298,8 @@ _G.QFXMythicCeremony_ShowResult = ShowResult
 local function ReadPlayerScore()
     local summary = ns.RunSummary
     if summary and type(summary.ReadPlayerScore) == "function" then
-        local score = summary.ReadPlayerScore()
+        local ok, raw = pcall(summary.ReadPlayerScore)
+        local score = ok and Util.SafeNumber(raw) or nil
         if score ~= nil then
             return score
         end
@@ -271,23 +315,24 @@ local function EstimateRank(score)
     if score == nil then
         return nil
     end
-    local region = type(ns.GetSelectedRegion) == "function" and ns.GetSelectedRegion() or nil
-    if not region and type(ns.ResolveSelectedRegion) == "function" then
-        region = ns.ResolveSelectedRegion()
-    end
-    local summary = ns.RunSummary
-    if not region or not summary or type(summary.EstimateRankForScore) ~= "function" then
+    local ok, rank = pcall(function()
+        local region = type(ns.GetSelectedRegion) == "function" and ns.GetSelectedRegion() or nil
+        if not region and type(ns.ResolveSelectedRegion) == "function" then
+            region = ns.ResolveSelectedRegion()
+        end
+        local summary = ns.RunSummary
+        if region and summary and type(summary.EstimateRankForScore) == "function" then
+            return summary.EstimateRankForScore(region, score)
+        end
+    end)
+    if not ok then
+        DebugPrint("rank estimate unavailable: " .. tostring(rank))
         return nil
     end
-    return Util.SafeNumber(summary.EstimateRankForScore(region, score))
+    return Util.SafeNumber(rank)
 end
 
 local preRunScore
-local activeMapID
-local completionSerial = 0
-local lastCompletionKey
-local lastCompletionAt = 0
-
 local lastCompletionIssue
 
 local function ReadCompletionInfo()
@@ -305,114 +350,36 @@ local function ReadCompletionInfo()
         lastCompletionIssue = "completion info inaccessible (" .. type(raw) .. ")"
         return nil
     end
-    local mapID = Util.SafeNumber(info.mapChallengeModeID)
-    if not mapID or mapID <= 0 then
-        lastCompletionIssue = "completion map ID unavailable"
-        return nil
-    end
     lastCompletionIssue = nil
     return info
-end
-
--- The completion API can lag behind the run (or return restricted values) for
--- a moment after CHALLENGE_MODE_COMPLETED. Keep polling briefly, but never let
--- a permanently mismatching field swallow the whole result screen: once the
--- retry window is exhausted the freshest readable completion data is used.
-local function ProcessCompletion(serial, scoreBefore, expectedMapID, infoAttempts, scoreAttempts)
-    if serial ~= completionSerial then
-        return
-    end
-    local info = ReadCompletionInfo()
-    local oldFromInfo = info and Util.SafeNumber(info.oldOverallDungeonScore) or nil
-
-    local staleReason
-    if not info then
-        staleReason = lastCompletionIssue or "completion info unavailable"
-    elseif expectedMapID and Util.SafeNumber(info.mapChallengeModeID) ~= expectedMapID then
-        staleReason = string.format(
-            "completion map %s does not match run start map %s",
-            tostring(info.mapChallengeModeID), tostring(expectedMapID))
-    elseif scoreBefore and oldFromInfo and math.abs(scoreBefore - oldFromInfo) > 0.2 then
-        staleReason = string.format(
-            "completion pre-run score %s does not match run start score %s",
-            tostring(oldFromInfo), tostring(scoreBefore))
-    end
-
-    if staleReason then
-        if infoAttempts < MAX_INFO_ATTEMPTS then
-            DebugPrint("completion info not ready (attempt " .. infoAttempts .. "): " .. staleReason)
-            C_Timer.After(0.25, function()
-                ProcessCompletion(serial, scoreBefore, expectedMapID, infoAttempts + 1, scoreAttempts)
-            end)
-            return
-        end
-        if not info or (expectedMapID and Util.SafeNumber(info.mapChallengeModeID) ~= expectedMapID) then
-            WarnPrint("no ceremony shown: " .. staleReason)
-            return
-        end
-        WarnPrint("using late completion data: " .. staleReason)
-    end
-
-    if Util.SafeBoolean(info.practiceRun) == true then
-        DebugPrint("ceremony skipped: practice run")
-        return
-    end
-
-    local scoreAfter = Util.SafeNumber(info.newOverallDungeonScore)
-    scoreBefore = oldFromInfo or scoreBefore
-    if scoreAfter == nil then
-        local current = ReadPlayerScore()
-        if current ~= nil and (scoreBefore == nil or current > scoreBefore + 0.05 or scoreAttempts >= 8) then
-            scoreAfter = current
-        elseif scoreAttempts < 8 then
-            C_Timer.After(1, function()
-                ProcessCompletion(serial, scoreBefore, expectedMapID, infoAttempts, scoreAttempts + 1)
-            end)
-            return
-        end
-    end
-
-    local key = table.concat({
-        tostring(info.mapChallengeModeID),
-        tostring(Util.SafeNumber(info.level) or 0),
-        tostring(Util.SafeNumber(info.time) or 0),
-    }, ":")
-    local now = type(GetTime) == "function" and GetTime() or 0
-    if key == lastCompletionKey and now - lastCompletionAt < 8 then
-        return
-    end
-    lastCompletionKey = key
-    lastCompletionAt = now
-
-    local scoreGain = scoreBefore and scoreAfter and math.max(0, scoreAfter - scoreBefore) or nil
-    local rankAfter = EstimateRank(scoreAfter)
-    local rankBefore = EstimateRank(scoreBefore)
-    local rankGain = rankBefore and rankAfter and math.max(0, math.floor(rankBefore - rankAfter + 0.5)) or nil
-    ShowResult(Util.SafeBoolean(info.onTime) == true, scoreAfter, scoreGain, rankAfter, rankGain, rankAfter ~= nil)
 end
 
 local events = CreateFrame("Frame")
 events:RegisterEvent("CHALLENGE_MODE_START")
 events:RegisterEvent("CHALLENGE_MODE_COMPLETED")
-events:SetScript("OnEvent", function(_, event, mapID)
+events:SetScript("OnEvent", function(_, event)
     if event == "CHALLENGE_MODE_START" then
-        completionSerial = completionSerial + 1
-        activeMapID = Util.SafeNumber(mapID)
         preRunScore = ReadPlayerScore()
-        DebugPrint(string.format(
-            "run start map=%s preRunScore=%s",
-            tostring(activeMapID), tostring(preRunScore)))
+        DebugPrint("run start preRunScore=" .. tostring(preRunScore))
     else
-        completionSerial = completionSerial + 1
-        local serial = completionSerial
-        local scoreBefore = preRunScore
-        local expectedMapID = activeMapID
+        local info = ReadCompletionInfo()
+        local scoreBefore = info and Util.SafeNumber(info.oldOverallDungeonScore) or preRunScore
         preRunScore = nil
-        activeMapID = nil
-        DebugPrint("run completed")
-        C_Timer.After(0.1, function()
-            ProcessCompletion(serial, scoreBefore, expectedMapID, 1, 0)
-        end)
+        if not info then
+            WarnPrint("no ceremony shown: " .. tostring(lastCompletionIssue))
+            return
+        end
+        if Util.SafeBoolean(info.practiceRun) == true then
+            DebugPrint("ceremony skipped: practice run")
+            return
+        end
+
+        local scoreAfter = Util.SafeNumber(info.newOverallDungeonScore) or ReadPlayerScore()
+        local scoreGain = scoreBefore and scoreAfter and math.max(0, scoreAfter - scoreBefore) or nil
+        local rankAfter = EstimateRank(scoreAfter)
+        local rankBefore = EstimateRank(scoreBefore)
+        local rankGain = rankBefore and rankAfter and math.max(0, math.floor(rankBefore - rankAfter + 0.5)) or nil
+        ShowResult(Util.SafeBoolean(info.onTime) == true, scoreAfter, scoreGain, rankAfter, rankGain, rankAfter ~= nil)
     end
 end)
 
@@ -469,6 +436,15 @@ SlashCmdList.QFXMYTHICCEREMONY = function(msg)
         ShowResult(true, score, nil, rank, nil, rank ~= nil)
     elseif msg == "test" then
         testPanel:SetShown(not testPanel:IsShown())
+    elseif msg == "unlock" then
+        SetUnlocked(true)
+    elseif msg == "lock" then
+        SetUnlocked(false)
+    elseif msg == "resetpos" then
+        local settings = GetSettings()
+        settings.x, settings.y = GetDefaultPosition()
+        ApplyPosition(settings)
+        print(PREFIX .. L.CEREMONY_POSITION_RESET)
     elseif msg == "sound" then
         local settings = GetSettings()
         settings.sound = not settings.sound
@@ -498,7 +474,12 @@ SlashCmdList.QFXMYTHICCEREMONY = function(msg)
         end
     elseif msg == "reset" then
         local settings = GetSettings()
-        settings.enabled, settings.sound, settings.scale, settings.y, settings.duration = true, true, 1, 0, 10
+        local defaultX, defaultY = GetDefaultPosition()
+        settings.enabled, settings.sound, settings.scale, settings.x, settings.y, settings.duration = true, true, 1, defaultX, defaultY, 10
+        if unlocked then
+            frame:SetScale(SIZE_FACTOR)
+            ApplyPosition(settings)
+        end
         print(L.CEREMONY_RESET)
     else
         local scale = msg:match("^scale%s+([%d%.]+)$")
@@ -515,4 +496,6 @@ end
 ns.Ceremony = {
     ShowResult = ShowResult,
     ReadCompletionInfo = ReadCompletionInfo,
+    SetUnlocked = SetUnlocked,
+    IsUnlocked = function() return unlocked end,
 }
