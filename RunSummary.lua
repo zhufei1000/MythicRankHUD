@@ -365,9 +365,10 @@ local function GetUpdateTimeText(region)
     return string.format("%02d-%02d %02d:%02d", month, day, hour, minute)
 end
 
- -- Announcement lines are sent this far apart: a burst of separate sentences
- -- would otherwise hit the client's chat rate limit.
-local ANNOUNCE_LINE_INTERVAL = 0.5
+ -- The report goes out in one burst: the client allows a few KB of burst
+ -- chat traffic, which a party-sized report stays far below, so every line
+ -- reaches the party in the same frame.
+local ANNOUNCE_LINE_INTERVAL = 0
 
 -- Queues one chat message at `delay` seconds from now. Queued lines are
 -- dropped once the run has started, so a key inserted mid-burst never gets

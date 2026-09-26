@@ -264,9 +264,12 @@ pendingFade.callback()
 assert(ceremonyFrame:IsShown() and ceremonyFrame.scripts.OnUpdate == nil,
     "old fade timer interrupted the unlock preview")
 ceremonyFrame.scripts.OnDragStart(ceremonyFrame)
-assert(ceremonyFrame.moving == true and ceremonyFrame.userPlaced == false,
-    "drag did not start or kept WoW layout-cache placement")
+assert(ceremonyFrame.userPlaced == false, "drag kept WoW layout-cache placement")
+assert(type(ceremonyFrame.scripts.OnUpdate) == "function", "drag did not install the position updater")
 cursorX, cursorY = 620, 460
+ceremonyFrame.scripts.OnUpdate(ceremonyFrame, 0.016)
+assert(ceremonyFrame.point[1] == "TOP" and ceremonyFrame.point[4] == defaultX + 120
+    and ceremonyFrame.point[5] == defaultY - 40, "the image did not follow the cursor while dragging")
 ceremonyFrame.scripts.OnDragStop(ceremonyFrame)
 assert(settings.x == defaultX + 120 and settings.y == defaultY - 40, "drag offsets were not saved")
 assert(ceremonyFrame.point[1] == "TOP" and ceremonyFrame.point[4] == defaultX + 120
@@ -277,8 +280,48 @@ assert(ns.Ceremony.IsUnlocked() == false, "settings cannot read the locked state
 SlashCmdList.QFXMYTHICCEREMONY("victory")
 assert(ceremonyFrame.point[4] == defaultX + 120 and ceremonyFrame.point[5] == defaultY - 40,
     "real result lost the dragged position")
+assert(ceremonyFrame.scoreRow.point[2] == ceremonyFrame
+    and ceremonyFrame.rankRow.point[2] == ceremonyFrame,
+    "result text rows are not anchored to the image frame")
 SlashCmdList.QFXMYTHICCEREMONY("resetpos")
 assert(settings.x == defaultX and settings.y == defaultY and ceremonyFrame.point[4] == defaultX
     and ceremonyFrame.point[5] == defaultY, "resetpos did not restore default position")
+
+-- Turning the sound off keeps the picture but must not play audio.
+local soundsBeforeMute = #sounds
+settings.sound = false
+SlashCmdList.QFXMYTHICCEREMONY("victory")
+assert(ceremonyFrame:IsShown(), "muted result did not show the image")
+assert(#sounds == soundsBeforeMute, "muted result still played a sound")
+settings.sound = true
+
+-- Turning the ceremony off hides the result and restores the native banner.
+settings.enabled = false
+ns.Ceremony.ApplySettingChange()
+assert(not ceremonyFrame:IsShown(), "disabling the ceremony left the image visible")
+assert(nativeBanner.alpha == 1, "disabling the ceremony did not restore the native banner")
+local soundsBeforeDisabled = #sounds
+local finishedBeforeDisabled = finishedBanners
+eventFrame.scripts.OnEvent(eventFrame, "CHALLENGE_MODE_START", 2523)
+completionInfo = {
+    mapChallengeModeID = 591, level = 10, time = 2400,
+    onTime = true, practiceRun = false,
+    oldOverallDungeonScore = 3200, newOverallDungeonScore = 3300,
+}
+eventFrame.scripts.OnEvent(eventFrame, "CHALLENGE_MODE_COMPLETED")
+assert(not ceremonyFrame:IsShown(), "disabled ceremony still showed a result")
+assert(#sounds == soundsBeforeDisabled, "disabled ceremony still played a sound")
+nativeBanner.stopped = false
+nativeBanner:PlayBanner()
+assert(not nativeBanner.stopped, "disabled ceremony still stopped the native banner")
+assert(finishedBanners == finishedBeforeDisabled, "disabled ceremony still advanced the banner queue")
+
+-- Re-enabling suppresses the native banner again.
+settings.enabled = true
+ns.Ceremony.ApplySettingChange()
+assert(nativeBanner.alpha == 0, "re-enabling the ceremony did not hide the native banner")
+nativeBanner:PlayBanner()
+assert(nativeBanner.stopped and finishedBanners == finishedBeforeDisabled + 1,
+    "re-enabled ceremony did not suppress the native banner")
 
 print("Ceremony_test: OK")

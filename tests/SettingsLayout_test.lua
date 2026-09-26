@@ -17,6 +17,7 @@ local function NewRegion(kind, height, template)
     function region:SetHeight(h) self.height = h end
     function region:SetText(text) self.text = text end
     function region:GetText() return self.text end
+    function region:SetFont() end
     function region:SetChecked(value) self.checked = value end
     function region:GetChecked() return self.checked end
     function region:SetScript(name, callback) self.scripts[name] = callback end
@@ -103,7 +104,8 @@ local L = {}
 for _, key in ipairs({
     "ADDON_TITLE", "SETTINGS_SHOW_HUD", "SETTINGS_SHOW_HUD_DESC", "SETTINGS_VISIBLE_ROWS",
     "SETTINGS_VISIBLE_ROWS_DESC", "SETTINGS_SECTION_HUD", "SETTINGS_SECTION_APPEARANCE",
-    "SETTINGS_SECTION_CEREMONY", "SETTINGS_CEREMONY_UNLOCK", "SETTINGS_CEREMONY_UNLOCK_DESC",
+    "SETTINGS_SECTION_CEREMONY", "SETTINGS_CEREMONY_ENABLED", "SETTINGS_CEREMONY_SOUND",
+    "SETTINGS_CEREMONY_UNLOCK", "SETTINGS_CEREMONY_UNLOCK_DESC",
     "SETTINGS_APPEARANCE_DESC", "SETTINGS_ANNOUNCE_DESC", "SETTINGS_BORDER_STYLE",
     "SETTINGS_BORDER_TRANSPARENT", "SETTINGS_BORDER_GOLD", "SETTINGS_BORDER_CLASS",
     "SETTINGS_BORDER_ALPHA", "SETTINGS_BACKGROUND_ALPHA", "SETTINGS_DETAIL_GROUP",
@@ -146,6 +148,14 @@ local namespace = {
     SetHUDBorderAlpha = function() end,
     SetHUDBackgroundAlpha = function() end,
     SetDetailEnabled = function() end,
+    SetCeremonyEnabled = function(value)
+        db.ceremony = db.ceremony or {}
+        db.ceremony.enabled = value
+    end,
+    SetCeremonySound = function(value)
+        db.ceremony = db.ceremony or {}
+        db.ceremony.sound = value
+    end,
     SetDetailBorderAlpha = function() end,
     SetDetailBackgroundAlpha = function() end,
     SetTeleportAnnouncementEnabled = function() end,
@@ -182,6 +192,22 @@ assert(ceremonyCheck.checked == true, "checkbox did not reflect current unlock s
 ceremonyCheck:SetChecked(false)
 ceremonyCheck.scripts.OnClick(ceremonyCheck)
 assert(_G.ceremonyUnlocked == false, "checkbox did not lock the ceremony image")
+
+local ceremonyEnabledCheck, ceremonySoundCheck
+for _, item in ipairs(scripts) do
+    if item.text == "SETTINGS_CEREMONY_ENABLED" then ceremonyEnabledCheck = item end
+    if item.text == "SETTINGS_CEREMONY_SOUND" then ceremonySoundCheck = item end
+end
+assert(ceremonyEnabledCheck and ceremonyEnabledCheck.checked == true,
+    "ceremony enable checkbox missing or off by default")
+assert(ceremonySoundCheck and ceremonySoundCheck.checked == true,
+    "ceremony sound checkbox missing or off by default")
+ceremonyEnabledCheck:SetChecked(false)
+ceremonyEnabledCheck.scripts.OnClick(ceremonyEnabledCheck)
+assert(db.ceremony.enabled == false, "checkbox did not disable the ceremony")
+_G.createdPanel.scripts.OnShow()
+assert(ceremonyEnabledCheck.checked == false, "checkbox did not reflect the disabled state")
+db.ceremony.enabled = true
 
 -- The three announcement switches must sit in the templates section (left
 -- column, below it), not up in the top-right HUD area.

@@ -52,6 +52,11 @@ local function GetSettings()
     return db and db.ceremony or nil
 end
 
+local function IsCeremonyEnabled()
+    local settings = GetSettings()
+    return settings == nil or settings.enabled ~= false
+end
+
 local function SafeNumeric(value)
     if type(value) == "number" then
         return Util.SafeNumber(value)
@@ -132,32 +137,52 @@ local function ApplyPosition(settings)
         Util.ClampNumber(settings.y, -2000, 2000, defaultY))
 end
 
-local dragStartX, dragStartY
-frame:SetScript("OnDragStart", function(self)
-    if not unlocked or type(GetCursorPosition) ~= "function" then return end
-    if type(InCombatLockdown) == "function" and InCombatLockdown() then return end
-    local ok, x, y = pcall(GetCursorPosition)
-    x, y = ok and Util.SafeNumber(x), ok and Util.SafeNumber(y)
-    if not x or not y then return end
-    dragStartX, dragStartY = x, y
-    self:StartMoving()
-    self:SetUserPlaced(false)
-end)
+-- The image is moved by re-anchoring it to the cursor offset every frame.
+-- StartMoving() would let the engine rewrite the anchor and then snap back on
+-- the next ApplyPosition, which is what made the image land off from where the
+-- cursor released it.
+local dragging = false
+local dragCursorX, dragCursorY, dragAnchorX, dragAnchorY
 
-frame:SetScript("OnDragStop", function(self)
-    if not dragStartX then return end
-    self:StopMovingOrSizing()
-    self:SetUserPlaced(false)
-    local settings = GetSettings()
+local function ReadCursor()
+    if type(GetCursorPosition) ~= "function" then return nil end
     local ok, x, y = pcall(GetCursorPosition)
     local scaleOK, scale = pcall(UIParent.GetEffectiveScale, UIParent)
     x, y = ok and Util.SafeNumber(x), ok and Util.SafeNumber(y)
     scale = scaleOK and Util.SafeNumber(scale) or nil
-    if settings and x and y and scale and scale > 0 then
-        settings.x = Util.ClampNumber((settings.x or 0) + (x - dragStartX) / scale, -2000, 2000, 0)
-        settings.y = Util.ClampNumber((settings.y or 0) + (y - dragStartY) / scale, -2000, 2000, 0)
-    end
-    dragStartX, dragStartY = nil, nil
+    if not x or not y or not scale or scale <= 0 then return nil end
+    return x / scale, y / scale
+end
+
+local function UpdateDragPosition()
+    if not dragging then return end
+    local cursorX, cursorY = ReadCursor()
+    local settings = GetSettings()
+    if not cursorX or not settings then return end
+    settings.x = Util.ClampNumber(dragAnchorX + (cursorX - dragCursorX), -2000, 2000, dragAnchorX)
+    settings.y = Util.ClampNumber(dragAnchorY + (cursorY - dragCursorY), -2000, 2000, dragAnchorY)
+    ApplyPosition(settings)
+end
+
+frame:SetScript("OnDragStart", function(self)
+    if not unlocked then return end
+    if type(InCombatLockdown) == "function" and InCombatLockdown() then return end
+    local cursorX, cursorY = ReadCursor()
+    local settings = GetSettings()
+    if not cursorX or not settings then return end
+    dragging = true
+    dragCursorX, dragCursorY = cursorX, cursorY
+    dragAnchorX, dragAnchorY = settings.x or 0, settings.y or 0
+    self:SetUserPlaced(false)
+    self:SetScript("OnUpdate", UpdateDragPosition)
+end)
+
+frame:SetScript("OnDragStop", function(self)
+    if not dragging then return end
+    dragging = false
+    self:SetScript("OnUpdate", nil)
+    self:SetUserPlaced(false)
+    local settings = GetSettings()
     if settings then ApplyPosition(settings) end
 end)
 
@@ -356,8 +381,17 @@ end
 
 -- Let Blizzard finish its completion processing (including system chat),
 -- then dismiss only its banner. StopBanner cancels its timer, and notifying
--- the manager lets any other queued top banner play normally.
+-- the manager lets any other queued top banner play normally. While the
+-- ceremony is switched off the native banner is left untouched.
 local bannerHooked = false
+local hookedBanner
+
+local function SyncNativeBannerAlpha()
+    if hookedBanner then
+        hookedBanner:SetAlpha(IsCeremonyEnabled() and 0 or 1)
+    end
+end
+
 local function HideBlizzardCompletionBanner()
     local banner = _G.ChallengeModeCompleteBanner
     if bannerHooked or not banner or type(banner.PlayBanner) ~= "function"
@@ -365,12 +399,25 @@ local function HideBlizzardCompletionBanner()
         or type(TopBannerManager_BannerFinished) ~= "function" then
         return
     end
-    banner:SetAlpha(0)
+    hookedBanner = banner
+    SyncNativeBannerAlpha()
     if pcall(hooksecurefunc, banner, "PlayBanner", function(self)
+        if not IsCeremonyEnabled() then
+            return
+        end
         self:StopBanner()
         TopBannerManager_BannerFinished()
     end) then
         bannerHooked = true
+    end
+end
+
+local function ApplySettingChange()
+    SyncNativeBannerAlpha()
+    if not IsCeremonyEnabled() then
+        resultSerial = resultSerial + 1
+        frame:SetScript("OnUpdate", nil)
+        frame:Hide()
     end
 end
 
@@ -529,4 +576,5 @@ ns.Ceremony = {
     ReadCompletionInfo = ReadCompletionInfo,
     SetUnlocked = SetUnlocked,
     IsUnlocked = function() return unlocked end,
+    ApplySettingChange = ApplySettingChange,
 }

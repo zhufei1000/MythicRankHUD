@@ -17,7 +17,7 @@ local DEFAULT_ROW_VISIBILITY = {
     percentileRange = false,
 }
 
-local CEREMONY_DEFAULT_X = -1.110935236012978
+local CEREMONY_DEFAULT_X = 0
 local CEREMONY_DEFAULT_Y = 274.444395477572
 
 local DEFAULTS = {
@@ -955,6 +955,17 @@ end
 
 function ns.SetDetailEnabled(value)
     GetDB().enableMythicDetail = value == true
+end
+
+function ns.SetCeremonyEnabled(value)
+    GetDB().ceremony.enabled = value == true
+    if ns.Ceremony and type(ns.Ceremony.ApplySettingChange) == "function" then
+        ns.Ceremony.ApplySettingChange()
+    end
+end
+
+function ns.SetCeremonySound(value)
+    GetDB().ceremony.sound = value == true
 end
 
 function ns.SetHUDBorderAlpha(value)

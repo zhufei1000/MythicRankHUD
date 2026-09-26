@@ -7,6 +7,8 @@ local announceDelaySlider
 local announceChecks = {}
 local templateBoxes = {}
 local detailCheck
+local ceremonyCheck
+local ceremonySoundCheck
 local ceremonyUnlockCheck
 local borderAlphaSlider
 local backgroundAlphaSlider
@@ -252,6 +254,7 @@ local function CreateDescription(parent, text, y, width)
         return y
     end
     local desc = parent:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+    desc:SetFont(STANDARD_TEXT_FONT, 11, "")
     desc:SetPoint("TOPLEFT", parent, "TOPLEFT", 16, y)
     desc:SetWidth(math.max(100, width - 32))
     desc:SetJustifyH("LEFT")
@@ -297,6 +300,12 @@ local function RefreshControls()
     end
     if detailCheck then
         SetChecked(detailCheck, db.enableMythicDetail ~= false)
+    end
+    if ceremonyCheck then
+        SetChecked(ceremonyCheck, (db.ceremony and db.ceremony.enabled) ~= false)
+    end
+    if ceremonySoundCheck then
+        SetChecked(ceremonySoundCheck, (db.ceremony and db.ceremony.sound) ~= false)
     end
     if ceremonyUnlockCheck and ns.Ceremony then
         SetChecked(ceremonyUnlockCheck, ns.Ceremony.IsUnlocked())
@@ -495,6 +504,14 @@ local function CreateSettingsPanel()
 
     -- Mythic+ completion image ---------------------------------------------
     y = CreateSectionHeader(content, L.SETTINGS_SECTION_CEREMONY, y, width)
+    ceremonyCheck = CreateCheckButton(content, 18, y, L.SETTINGS_CEREMONY_ENABLED, function(checked)
+        ns.SetCeremonyEnabled(checked)
+    end)
+    y = y - 30
+    ceremonySoundCheck = CreateCheckButton(content, 18, y, L.SETTINGS_CEREMONY_SOUND, function(checked)
+        ns.SetCeremonySound(checked)
+    end)
+    y = y - 30
     ceremonyUnlockCheck = CreateCheckButton(content, 18, y, L.SETTINGS_CEREMONY_UNLOCK, function(checked)
         ns.Ceremony.SetUnlocked(checked)
     end)
@@ -595,6 +612,7 @@ local function CreateSettingsPanel()
     -- The placeholder list comes last: it wraps to as many lines as the client
     -- needs, so it is placed where nothing follows it but the reset button.
     local hintText = content:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+    hintText:SetFont(STANDARD_TEXT_FONT, 11, "")
     hintText:SetPoint("TOPLEFT", content, "TOPLEFT", 18, rowY)
     hintText:SetWidth(math.max(480, width - 40))
     hintText:SetJustifyH("LEFT")
