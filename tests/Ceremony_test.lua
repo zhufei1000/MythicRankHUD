@@ -21,6 +21,7 @@ function widgetMethods:SetPoint(point, relative, relativePoint, x, y)
 end
 function widgetMethods:SetScript(name, callback) self.scripts[name] = callback end
 function widgetMethods:RegisterEvent(name) self.events[name] = true end
+function widgetMethods:UnregisterEvent(name) self.events[name] = nil end
 function widgetMethods:Show() self.visible = true end
 function widgetMethods:Hide() self.visible = false end
 function widgetMethods:IsShown() return self.visible == true end
@@ -49,6 +50,13 @@ _G.C_Timer = { After = function(delay, callback)
     timers[#timers + 1] = { delay = delay, callback = callback }
 end }
 _G.PlaySoundFile = function(path) sounds[#sounds + 1] = path end
+_G.hooksecurefunc = function(object, methodName, callback)
+    local original = object[methodName]
+    object[methodName] = function(self, ...)
+        original(self, ...)
+        callback(self, ...)
+    end
+end
 _G.C_ChallengeMode = {
     GetChallengeCompletionInfo = function() return completionInfo end,
     GetOverallDungeonScore = function() return score end,
@@ -92,16 +100,37 @@ local ns = {
 
 assert(loadfile("Ceremony.lua"))("MythicRankHUD", ns)
 
-local ceremonyFrame, eventFrame
+local ceremonyFrame, eventFrame, bannerWatcher
 for _, frame in ipairs(frames) do
     if frame.name == "MythicRankHUDCeremonyFrame" then ceremonyFrame = frame end
     if frame.events.CHALLENGE_MODE_START and frame.events.CHALLENGE_MODE_COMPLETED then eventFrame = frame end
+    if frame.events.ADDON_LOADED then bannerWatcher = frame end
 end
-assert(ceremonyFrame and eventFrame, "ceremony UI or events were not registered")
+assert(ceremonyFrame and eventFrame and bannerWatcher, "ceremony UI or events were not registered")
 assert(ceremonyFrame.mouse == false and ceremonyFrame.wheel == false, "ceremony blocks mouse input")
-assert(ceremonyFrame.strata == "LOW", "ceremony could cover the Blizzard completion banner")
+assert(ceremonyFrame.strata == "MEDIUM", "ceremony image could sit behind the game UI")
 assert(ceremonyFrame.dragButton == "LeftButton", "image is not draggable")
 assert(ns.Ceremony.ReadCompletionInfo() == nil, "missing completion info was accepted")
+
+bannerWatcher.scripts.OnEvent(bannerWatcher, "ADDON_LOADED", "AnotherAddOn")
+assert(bannerWatcher.events.ADDON_LOADED, "unrelated addon load disabled the banner watcher")
+local nativeMessages, finishedBanners = 0, 0
+local nativeBanner = setmetatable({ scripts = {}, events = {}, PlayBanner = function(self)
+    nativeMessages = nativeMessages + 1
+    self:Show()
+end, StopBanner = function(self)
+    self.stopped = true
+    self:Hide()
+end }, { __index = widgetMethods })
+_G.ChallengeModeCompleteBanner = nativeBanner
+_G.TopBannerManager_BannerFinished = function() finishedBanners = finishedBanners + 1 end
+bannerWatcher.scripts.OnEvent(bannerWatcher, "ADDON_LOADED", "Blizzard_ChallengesUI")
+assert(not bannerWatcher.events.ADDON_LOADED and nativeBanner.alpha == 0,
+    "native completion banner was not hidden when Blizzard UI loaded")
+nativeBanner:PlayBanner()
+assert(nativeMessages == 1 and nativeBanner.stopped and not nativeBanner:IsShown(),
+    "hiding the native banner skipped its processing or left it visible")
+assert(finishedBanners == 1, "hiding the native banner blocked the top-banner queue")
 
 eventFrame.scripts.OnEvent(eventFrame, "CHALLENGE_MODE_START", 2520)
 score = 3032

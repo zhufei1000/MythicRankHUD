@@ -76,7 +76,7 @@ end
 
 local frame = CreateFrame("Frame", ADDON_NAME .. "CeremonyFrame", UIParent)
 frame:SetSize(600, 580)
-frame:SetFrameStrata("LOW")
+frame:SetFrameStrata("MEDIUM")
 frame:SetFrameLevel(120)
 frame:SetMovable(true)
 frame:RegisterForDrag("LeftButton")
@@ -353,6 +353,37 @@ local function ReadCompletionInfo()
     lastCompletionIssue = nil
     return info
 end
+
+-- Let Blizzard finish its completion processing (including system chat),
+-- then dismiss only its banner. StopBanner cancels its timer, and notifying
+-- the manager lets any other queued top banner play normally.
+local bannerHooked = false
+local function HideBlizzardCompletionBanner()
+    local banner = _G.ChallengeModeCompleteBanner
+    if bannerHooked or not banner or type(banner.PlayBanner) ~= "function"
+        or type(banner.StopBanner) ~= "function" or type(hooksecurefunc) ~= "function"
+        or type(TopBannerManager_BannerFinished) ~= "function" then
+        return
+    end
+    banner:SetAlpha(0)
+    if pcall(hooksecurefunc, banner, "PlayBanner", function(self)
+        self:StopBanner()
+        TopBannerManager_BannerFinished()
+    end) then
+        bannerHooked = true
+    end
+end
+
+local bannerWatcher = CreateFrame("Frame")
+bannerWatcher:RegisterEvent("ADDON_LOADED")
+bannerWatcher:SetScript("OnEvent", function(self, _, addonName)
+    if addonName == "Blizzard_ChallengesUI" then
+        HideBlizzardCompletionBanner()
+        if bannerHooked then self:UnregisterEvent("ADDON_LOADED") end
+    end
+end)
+HideBlizzardCompletionBanner()
+if bannerHooked then bannerWatcher:UnregisterEvent("ADDON_LOADED") end
 
 local events = CreateFrame("Frame")
 events:RegisterEvent("CHALLENGE_MODE_START")
