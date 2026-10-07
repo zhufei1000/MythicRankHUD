@@ -287,7 +287,20 @@ local function GetDateKey()
 end
 
 local function FormatVersionTimestamp(version)
-    local year, month, day, hour, minute = tostring(version or ""):match(
+    local text = tostring(version or "")
+    -- Show the data pack's region-local wall clock, matching the run
+    -- announcements; the raw UTC string stays as the fallback while the
+    -- summary module or the selected region is unavailable.
+    local summary = ns.RunSummary
+    local formatLocal = summary and summary.FormatDataVersionLocal
+    local region = type(ns.GetSelectedRegion) == "function" and ns.GetSelectedRegion() or nil
+    if type(formatLocal) == "function" and region then
+        local ok, localized = pcall(formatLocal, text, region)
+        if ok and type(localized) == "string" and localized ~= "" then
+            return localized
+        end
+    end
+    local year, month, day, hour, minute = text:match(
         "^(%d%d%d%d)(%d%d)(%d%d)(%d%d)(%d%d)"
     )
     if not year then return "--" end

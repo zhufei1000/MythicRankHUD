@@ -236,15 +236,34 @@ assert(namespace.IsTeleportAnnouncementEnabled() == true, "teleport announcement
 namespace.SetTeleportAnnouncementEnabled(false)
 
 local frameCountBeforeSnapshot = #createdFrames
+-- The HUD shows the data pack's region-local wall clock (CN = UTC+8) through
+-- the same conversion the run announcements use.
+namespace.RunSummary = {
+    FormatDataVersionLocal = function(version, region)
+        if region == "cn" and tostring(version) == "202608311407" then
+            return "08-31 22:07"
+        end
+        return nil
+    end,
+}
 local snapshot = namespace.GetHUDSnapshot(true)
 
 assert(type(snapshot) == "table", "snapshot refresh did not return a table")
 assert(type(snapshot.score) == "table", "snapshot refresh did not produce score metadata")
 assert(
-    snapshot.dataUpdated.value == "Updated: 08-31 14:07 UTC",
-    "snapshot did not show only the source update timestamp"
+    snapshot.dataUpdated.value == "Updated: 08-31 22:07",
+    "snapshot did not convert the data update time to the region-local clock"
 )
 assert(#createdFrames == frameCountBeforeSnapshot, "snapshot refresh created a UI frame")
+
+-- Without the summary module the raw UTC string must come back.
+namespace.RunSummary = nil
+namespace.RefreshHUDData()
+snapshot = namespace.GetHUDSnapshot(false)
+assert(
+    snapshot.dataUpdated.value == "Updated: 08-31 14:07 UTC",
+    "snapshot did not fall back to the UTC timestamp without the summary module"
+)
 
 QFXMythicRankData.GetPlayerScore = function() return 4453 end
 QFXMythicRankData.EstimateRank = function()

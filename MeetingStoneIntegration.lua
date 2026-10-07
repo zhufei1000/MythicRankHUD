@@ -35,7 +35,7 @@ local TEXT = IS_ZH_CN and {
     dataPackInstall = "请安装并启用：%s",
     dataPackPurpose = "分数、排名与分数线由该插件提供",
     updateNoticeTitle = "数据库说明",
-    updateNoticeBody = "数据库插件每天按各区当地时间早上 06:18 开始更新，完成后发布，请及时更新数据库插件",
+    updateNoticeBody = "数据库插件每天按各区当地时间早上 06:18 开始更新，完成后发布，请在 CurseForge 上及时更新数据库插件",
 } or {
     combinedTitle = "Mythic+ Info",
     score = "Mythic+ Score",
@@ -53,7 +53,7 @@ local TEXT = IS_ZH_CN and {
     dataPackInstall = "Install and enable: %s",
     dataPackPurpose = "This plugin provides scores, ranks, and cutoffs",
     updateNoticeTitle = "Database Notice",
-    updateNoticeBody = "Database plugins start updating daily at 06:18 local time in each region and are published when ready. Keep them current.",
+    updateNoticeBody = "Database plugins start updating daily at 06:18 local time in each region and are published when ready. Keep the database plugin updated on CurseForge.",
 }
 
 -- The regional build shows the client's Chinese dungeon names; these short
@@ -284,6 +284,10 @@ local CLIENT_REGION_KEYS = { "us", "kr", "eu", "tw", "cn" }
 
 local SUPPORTED_LOAD_EVENTS = {
     GroupFinder = true,
+    -- GroupFinder 3.x lazy-loads its workspace component and only then builds
+    -- GroupFinderAddonFrame, so this load event is what restarts the attach
+    -- watcher for the first open.
+    GroupFinder_WorkspaceUI = true,
     PremadeGroupBoard = true,
     MeetingStone_Happy = true,
     MeetingStoneHappy = true,
@@ -1406,14 +1410,10 @@ local function UpdateVisibility(updates)
     local desired = shown and true or false
     local wantsStyle = updates and updates.style
     if locked then
-        if integration.appliedShown ~= desired then
-            integration.pendingVisibility = true
-        end
         if wantsStyle then
             integration.pendingStyle = true
         end
     else
-        integration.pendingVisibility = nil
         if shown and (not updates or updates.layout or integration.positionedHost ~= mainPanel) then
             PositionIntegration()
             integration.positionedHost = mainPanel
@@ -1429,8 +1429,11 @@ local function UpdateVisibility(updates)
         end
     end
     if shown then
-        if not locked then
-            integration.updateNotice:SetShown(not integration.updateNoticeDismissed)
+        if not locked and integration.updateNotice then
+            local noticeShown = not integration.updateNoticeDismissed
+            if integration.updateNotice:IsShown() ~= noticeShown then
+                integration.updateNotice:SetShown(noticeShown)
+            end
         end
         local full = not updates or updates.full
         if full then
@@ -1444,7 +1447,9 @@ local function UpdateVisibility(updates)
         if full or updates.profile then UpdateProfileSummary() end
         if full or updates.weekly then UpdateWeeklyDetails() end
     elseif integration.updateNotice and not locked then
-        integration.updateNotice:Hide()
+        if integration.updateNotice:IsShown() then
+            integration.updateNotice:Hide()
+        end
     end
 end
 
@@ -1558,6 +1563,33 @@ local ATTACH_MAX_ATTEMPTS = 30
 
 local TryAttach
 
+-- GroupFinder 3.x builds its main window lazily: GroupFinderAddonFrame only
+-- exists after the player first opens the board, and the workspace component
+-- may already be loaded by then. The secure post-hook on the workspace
+-- ShowFrame catches every open whose frame appears after the bounded
+-- ADDON_LOADED retry window; a failed install (frame not created yet, method
+-- renamed by a future GroupFinder update) is retried from the load events.
+local function InstallHostShowHook()
+    if integration.hostShowHookInstalled then return end
+    local addon = _G.GroupFinder
+    local mainFrame = type(addon) == "table" and addon.MainFrame
+    if type(mainFrame) ~= "table" or type(hooksecurefunc) ~= "function" then return end
+    if type(rawget(mainFrame, "ShowFrame")) ~= "function" then return end
+    local ok = pcall(hooksecurefunc, mainFrame, "ShowFrame", function()
+        -- Mirror the host OnShow semantics: switch the HUD to the window that
+        -- just opened, even while another board stays visible. The frame is
+        -- created before this post-hook runs, so it can be hooked directly.
+        local host = GetGroupFinderMainFrame()
+        if not host or host == integration.mainPanel then return end
+        if host.IsShown and not host:IsShown() then return end
+        HookAvailableHosts()
+        SetActiveHost("groupFinder", host)
+    end)
+    if ok then
+        integration.hostShowHookInstalled = true
+    end
+end
+
 local function ScheduleAttachRetry(delay)
     -- single-flight: at most one watcher chain may be scheduled at a time, so
     -- repeated ADDON_LOADED/PLAYER_LOGIN events never stack parallel pollers
@@ -1572,6 +1604,7 @@ end
 
 TryAttach = function()
     integration.attachAttempts = integration.attachAttempts + 1
+    InstallHostShowHook()
     local attached, waiting = HookAvailableHosts()
     local current = integration.mainPanel
     if not (current and current.IsShown and current:IsShown()) then
@@ -1623,6 +1656,7 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1, arg2, arg3, arg4)
     if event == "ADDON_LOADED" then
         if arg1 == ADDON_NAME or SUPPORTED_LOAD_EVENTS[arg1] then
             integration.attachAttempts = 0
+            InstallHostShowHook()
             ScheduleAttachRetry(0.2)
             if not (C_Timer and type(C_Timer.After) == "function") then
                 TryAttach()

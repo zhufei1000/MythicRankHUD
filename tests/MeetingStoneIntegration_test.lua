@@ -105,6 +105,19 @@ end
 GameTooltip = setmetatable({}, { __index = function() return Noop end })
 GameTooltip_Hide = Noop
 C_Timer = { After = function(_, callback) callback() end }
+-- Secure post-hook stub: wraps table methods like Blizzard's hooksecurefunc
+-- and raises on non-functions so the pcall-based installer can retry later.
+function hooksecurefunc(target, method, callback)
+    local original = type(target) == "table" and rawget(target, method) or nil
+    if type(original) ~= "function" then
+        error("Attempt to hook a non-function", 2)
+    end
+    target[method] = function(...)
+        local a, b, c, d, e = original(...)
+        callback(...)
+        return a, b, c, d, e
+    end
+end
 Enum = { SpellBookSpellBank = { Player = 1 } }
 C_SpellBook = { IsSpellKnown = function() return false end }
 
@@ -307,7 +320,7 @@ assert(integration.seasonBar.resourceItems[7].resource.key == "manaflux", "manaf
 assert(integration.updateNotice:IsShown(), "database update notice was not shown")
 assert(integration.updateNotice.width == integration.sidePanel.width, "database notice width does not match the side panel")
 assert(integration.updateNotice.height == integration.seasonBar.height, "database notice height does not match the season bar")
-local expectedNotice = "Database plugins start updating daily at 06:18 local time in each region and are published when ready. Keep them current."
+local expectedNotice = "Database plugins start updating daily at 06:18 local time in each region and are published when ready. Keep the database plugin updated on CurseForge."
 assert(integration.updateNotice.body.text == expectedNotice,
     "database update notice text is incorrect")
 integration.updateNotice.closeButton.scripts.OnClick(integration.updateNotice.closeButton)
@@ -565,6 +578,120 @@ do
     enabledAddons.PremadeGroupBoard = false
 end
 
+-- Regression: GroupFinder 3.x lazy-loads its workspace component and only
+-- creates GroupFinderAddonFrame when the player first opens the board. The
+-- bounded login retry window can expire long before that; loading the
+-- workspace component must restart the watcher and hook the late frame.
+do
+    local queue = {}
+    local syncAfter = C_Timer.After
+    C_Timer.After = function(_, callback) queue[#queue + 1] = callback end
+    local function pump()
+        local callbacks = queue
+        queue = {}
+        for _, callback in ipairs(callbacks) do callback() end
+    end
+
+    for name in pairs(enabledAddons) do enabledAddons[name] = false end
+    PVEFrame.shown = false
+    PremadeGroupBoardFrame = nil
+    enabledAddons.GroupFinder = true
+    GroupFinderAddonFrame = nil
+
+    eventFrame.scripts.OnEvent(eventFrame, "ADDON_LOADED", "GroupFinder")
+    for _ = 1, 31 do pump() end
+    assert(integration.attachAttempts == 30, "GroupFinder attach watcher did not expire")
+    assert(not integration.seasonBar:IsShown(), "season bar shown before the GroupFinder window existed")
+
+    -- The player opens the board: GroupFinder lazy-loads GroupFinder_WorkspaceUI
+    -- and its first ShowFrame creates the named main frame.
+    GroupFinderAddonFrame = NewObject(true)
+    eventFrame.scripts.OnEvent(eventFrame, "ADDON_LOADED", "GroupFinder_WorkspaceUI")
+    pump()
+    assert(integration.mainPanel == GroupFinderAddonFrame,
+        "lazily created GroupFinder frame was not attached after the workspace component loaded")
+    assert(integration.hostKey == "groupFinder", "lazy GroupFinder adapter key is incorrect")
+    assert(integration.seasonBar:IsShown(), "season bar did not follow the lazily created GroupFinder frame")
+
+    GroupFinderAddonFrame.shown = false
+    GroupFinderAddonFrame.scripts.OnHide(GroupFinderAddonFrame)
+    pump()
+    assert(not integration.seasonBar:IsShown(), "season bar stayed visible after the lazy GroupFinder closed")
+
+    C_Timer.After = syncAfter
+    enabledAddons.GroupFinder = false
+    GroupFinderAddonFrame = nil
+end
+
+-- Regression: when the workspace component was loaded before the HUD could
+-- attach (for example the first open was blocked), the secure ShowFrame
+-- post-hook must attach the HUD as soon as the player opens the board.
+do
+    local queue = {}
+    local syncAfter = C_Timer.After
+    C_Timer.After = function(_, callback) queue[#queue + 1] = callback end
+    local function pump()
+        local callbacks = queue
+        queue = {}
+        for _, callback in ipairs(callbacks) do callback() end
+    end
+
+    for name in pairs(enabledAddons) do enabledAddons[name] = false end
+    PVEFrame.shown = false
+    GroupFinderAddonFrame = nil
+    enabledAddons.GroupFinder = true
+    GroupFinder = {
+        MainFrame = {
+            ShowFrame = function()
+                if not GroupFinderAddonFrame then
+                    GroupFinderAddonFrame = NewObject(true)
+                end
+            end,
+        },
+    }
+
+    eventFrame.scripts.OnEvent(eventFrame, "ADDON_LOADED", "GroupFinder_WorkspaceUI")
+    for _ = 1, 31 do pump() end
+    assert(not integration.seasonBar:IsShown(), "season bar shown before GroupFinder built its window")
+    assert(integration.hostShowHookInstalled == true, "ShowFrame post-hook was not installed")
+
+    -- A visible custom board must not block the post-hook: opening GroupFinder
+    -- while MeetingStone is shown has to move the HUD to the GroupFinder
+    -- window right away.
+    enabledAddons.MeetingStone = true
+    MeetingStoneMainPanel.shown = true
+    MeetingStoneMainPanel.scripts.OnShow(MeetingStoneMainPanel)
+    assert(integration.mainPanel == MeetingStoneMainPanel,
+        "MeetingStone did not take the HUD before the GroupFinder switch")
+
+    -- The player opens the board: GroupFinder calls its own ShowFrame, which
+    -- creates the main frame before returning; the post-hook then attaches.
+    GroupFinder.MainFrame.ShowFrame()
+    assert(GroupFinderAddonFrame ~= nil, "ShowFrame stub did not create the main frame")
+    assert(integration.mainPanel == GroupFinderAddonFrame,
+        "ShowFrame post-hook did not attach the lazily created GroupFinder frame")
+    assert(integration.hostKey == "groupFinder", "ShowFrame post-hook adapter key is incorrect")
+    assert(integration.seasonBar:IsShown(), "season bar did not follow the window opened after the retry window")
+
+    -- Closing the other board must leave the HUD on the open GroupFinder.
+    MeetingStoneMainPanel.shown = false
+    MeetingStoneMainPanel.scripts.OnHide(MeetingStoneMainPanel)
+    pump()
+    assert(integration.mainPanel == GroupFinderAddonFrame,
+        "HUD left the open GroupFinder window when the other board closed")
+
+    GroupFinderAddonFrame.shown = false
+    GroupFinderAddonFrame.scripts.OnHide(GroupFinderAddonFrame)
+    pump()
+    assert(not integration.seasonBar:IsShown(), "season bar stayed visible after the hooked GroupFinder closed")
+
+    C_Timer.After = syncAfter
+    enabledAddons.GroupFinder = false
+    enabledAddons.MeetingStone = false
+    GroupFinderAddonFrame = nil
+    GroupFinder = nil
+end
+
 -- Regression: the native group finder must stay a supported host even while a
 -- custom group addon is installed. Opening PVEFrame by any path has to move
 -- the HUD onto it, and closing it hands the HUD back to the open custom
@@ -615,13 +742,11 @@ do
     inCombat = true
     eventFrame.scripts.OnEvent(eventFrame, "CURRENCY_DISPLAY_UPDATE", 3446)
     assert(integration.seasonBar:IsShown(), "combat refresh performed a protected hide")
-    assert(integration.pendingVisibility == true, "combat deferral was not recorded")
 
     inCombat = false
     eventFrame.scripts.OnEvent(eventFrame, "PLAYER_REGEN_ENABLED")
     assert(not integration.seasonBar:IsShown(), "deferred hide was not applied after combat")
     assert(not integration.sidePanel:IsShown(), "side panel stayed visible after the deferred hide")
-    assert(integration.pendingVisibility == nil, "pending visibility flag was not cleared")
 
     MeetingStoneMainPanel.shown = true
     MeetingStoneMainPanel.scripts.OnShow(MeetingStoneMainPanel)
