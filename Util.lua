@@ -53,6 +53,13 @@ function Util.SafeTable(value)
 end
 
 function Util.SendPartyMessage(message)
+    local social = _G.C_SocialRestrictions
+    if type(social) == "table" and type(social.CanSendChat) == "function" then
+        local ok, allowed = pcall(social.CanSendChat)
+        if not ok or not Util.SafeBoolean(allowed) then
+            return false, "chat unavailable"
+        end
+    end
     local chat = _G.C_ChatInfo
     if type(chat) == "table" and type(chat.InChatMessagingLockdown) == "function" then
         local ok, locked = pcall(chat.InChatMessagingLockdown)

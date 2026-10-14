@@ -13,7 +13,7 @@ World of Warcraft (Midnight) Mythic+ rank HUD. Estimates regional M+ rank and pr
 | 仓库根目录（`MythicRankHUD.toc`） | 国际版（英文界面） | `/myrank` |
 | `releases/QFXMythicRankHUD/`（叠加层） | 中文版（zhCN / zhTW / enUS 本地化） | `/qfxrank` |
 
-当前版本 / Current version: **1.6.9**。
+当前版本 / Current version: **1.6.10**。
 
 ## 安装 / Install
 
@@ -38,7 +38,7 @@ for t in tests/*_test.lua; do lua5.3 "$t"; done
 ## 打包 / Packaging
 
 ```powershell
-.\tools\build_release.ps1   # 生成 releases/MythicRankHUD-<版本>.zip 与 releases/QFXMythicRankHUD-<版本>.zip
+.\tools\build_release.ps1   # 生成 releases/MythicRankHUD_<版本>.zip 与 releases/QFXMythicRankHUD_<版本>.zip
 ```
 
 ## 自动发布 / Automated Release（国际版 → CurseForge）
@@ -62,6 +62,8 @@ git push origin 1.3.30
 - QFXMythicRankHUD（中文版）不发布到 CurseForge，工作流只打包国际版。
 
 ## 更新日志 / Changelog
+
+- **1.6.10** — 适配 WoW 12.1.5 聊天发送条件；同步国服当前共用源码及媒体，修复切换设置标签时重复保存结算图位置；国服设置支持管理中心托管，国际版继续使用自身设置；保留两版独立存档。
 
 - **1.6.9** — 适配 GroupFinder 3.x 的懒加载改动：GroupFinder 现在只在玩家首次打开集合石窗口时才创建主窗口，旧版的一次性挂载窗口期（登录后约 15 秒）会在窗口创建前就结束，导致 HUD 不再挂到集合石上。现在加载 `GroupFinder_WorkspaceUI` 组件时会重新开始挂载重试，并额外在主窗口 ShowFrame 上安装安全后置钩子，确保挂载窗口期结束后才打开的集合石窗口也能挂上 HUD；多个集合石窗口同时打开时，打开 GroupFinder 会立即把 HUD 切换到该窗口。左侧面板「数据更新」时间改为按所选区域的当地时间显示（与跑本公告一致，原先固定显示 UTC）；「数据库说明」提示补充「请在 CurseForge 上及时更新数据库插件」。同时清理了无用的延迟显示状态字段，数据库说明面板不再在每次刷新事件中重复调用显示/隐藏。
 - **1.6.8** — 设置页「大秘境结算图片」分区新增「显示结算图片和音效」「播放结算音效」两个开关（默认开启）：关闭总开关后不再显示插件结算图片/音效，并恢复暴雪原生完成横幅；修复解锁拖动结算图松手后位置跳回的问题（移到哪停在哪）；结算图片默认位置改为水平正中（Y 轴不变）；结算喊话改为同一帧一次发完（不再 0.5 秒逐条）；设置界面说明文字字号缩小；移除无用的 NEXT_CUTOFF 文案。

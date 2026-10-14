@@ -39,8 +39,23 @@ jobs:
             echo "::endgroup::"
           done
 
+      - name: Validate versions and extract release notes
+        run: |
+          set -euo pipefail
+          test -n "${CF_API_TOKEN}"
+          version=$(sed -n 's/^## Version:[[:space:]]*//p' MythicRankHUD.toc | head -n 1 | tr -d '\r')
+          cn_version=$(sed -n 's/^## Version:[[:space:]]*//p' releases/QFXMythicRankHUD/QFXMythicRankHUD.toc | head -n 1 | tr -d '\r')
+          test "${GITHUB_REF_NAME}" = "${version}"
+          test "${version}" = "${cn_version}"
+          grep -q '^## Interface:.*120105' MythicRankHUD.toc
+          awk -v ver="${version}" 'found && /^## / { exit } $0 == "## " ver { found = 1 } found { print }' CHANGELOG.md > CHANGELOG.tmp
+          test -s CHANGELOG.tmp
+          mv CHANGELOG.tmp CHANGELOG.md
+
       # Packages the repository root as MythicRankHUD (.pkgmeta defines the
       # ignore list) and uploads to CurseForge (project ID in the TOC) and to
       # GitHub Releases. QFXMythicRankHUD is not published from this workflow.
       - name: Package and upload
         uses: BigWigsMods/packager@v2
+        with:
+          args: -n "MythicRankHUD_{project-version}"

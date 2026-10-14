@@ -635,6 +635,7 @@ local function CreateSettingsPanel()
     end
 
     panel:SetScript("OnShow", function()
+        if ns.TryOpenManager and ns.TryOpenManager() then panel:Hide(); return end
         BuildSettingsControls()
         RefreshControls()
     end)

@@ -16,7 +16,7 @@ $overlay = Join-Path $root "releases/QFXMythicRankHUD"
 $files = @(
     "Core.lua", "Announcer.lua", "EUI.lua", "EUINative.lua", "Locale.lua", "MeetingStoneIntegration.lua", "MythicDetail.lua",
     "MythicDetailData.lua", "MythicDetailResources.lua", "MythicDetailStatistics.lua",
-    "RankTarget.lua", "Region.lua", "RunSummary.lua", "Ceremony.lua", "Settings.lua", "Util.lua",
+    "RankTarget.lua", "Region.lua", "RunSummary.lua", "Ceremony.lua", "Settings.lua", "Util.lua", "ManagerBridge.lua",
     "Media/Ceremony/victory_emblem.png", "Media/Ceremony/defeat_emblem.png",
     "Media/Ceremony/green_up_arrow_taper_mask.png", "Media/Ceremony/Victory.ogg",
     "Media/Ceremony/Defeat.ogg"
@@ -51,7 +51,7 @@ function New-PackageEntries($tocName, $tocPath, $extraFiles) {
 }
 
 function New-AddonZip($zipPath, $folder, $entries) {
-    if (Test-Path -LiteralPath $zipPath) { Remove-Item -LiteralPath $zipPath -Force }
+    if (Test-Path -LiteralPath $zipPath) { throw "Release ZIP already exists: $zipPath" }
     $zip = [System.IO.Compression.ZipFile]::Open($zipPath, 'Create')
     try {
         foreach ($entry in $entries.GetEnumerator()) {
@@ -69,11 +69,11 @@ function New-AddonZip($zipPath, $folder, $entries) {
 
 $mainEntries = New-PackageEntries "MythicRankHUD.toc" `
     (Join-Path $root "MythicRankHUD.toc") $null
-New-AddonZip (Join-Path $root ("releases/MythicRankHUD-" + $mainVersion + ".zip")) `
+New-AddonZip (Join-Path $root ("releases/MythicRankHUD_" + $mainVersion + ".zip")) `
     "MythicRankHUD" $mainEntries
 
 $cnExtra = @{ "LocaleCN.lua" = Join-Path $overlay "LocaleCN.lua" }
 $cnEntries = New-PackageEntries "QFXMythicRankHUD.toc" `
     (Join-Path $overlay "QFXMythicRankHUD.toc") $cnExtra
-New-AddonZip (Join-Path $root ("releases/QFXMythicRankHUD-" + $mainVersion + ".zip")) `
+New-AddonZip (Join-Path $root ("releases/QFXMythicRankHUD_" + $mainVersion + ".zip")) `
     "QFXMythicRankHUD" $cnEntries

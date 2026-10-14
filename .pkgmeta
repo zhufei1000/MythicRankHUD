@@ -2,7 +2,12 @@
 # The international addon lives in the repository root; the regional variant is
 # composed from the same Lua sources by tools/build_release.ps1.
 package-as: MythicRankHUD
+manual-changelog:
+  filename: CHANGELOG.md
+  markup-type: markdown
 ignore:
+  - AGENTS.md
+  - CHANGELOG.md
   - README.md
   - .agents
   - .codex

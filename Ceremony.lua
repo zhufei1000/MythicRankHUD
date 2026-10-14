@@ -187,9 +187,12 @@ frame:SetScript("OnDragStop", function(self)
 end)
 
 local function SetUnlocked(value)
+    value = not not value
+    if unlocked == value then return end
     local settings = GetSettings()
     if not settings then return end
     unlocked = value
+    dragging = false
     resultSerial = resultSerial + 1
     frame:SetScript("OnUpdate", nil)
     frame:EnableMouse(value)
